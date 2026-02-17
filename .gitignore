@@ -1,0 +1,11 @@
+frontend/node_modules/
+backend_venv/
+.DS_Store
+*.db
+*.pyc
+__pycache__/
+.vscode/
+npm_cache/
+logs/
+data/
+!data/.gitkeep

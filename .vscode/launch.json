@@ -1,0 +1,50 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Backend: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "cwd": "${workspaceFolder}/backend",
+            "args": [
+                "app.main:app",
+                "--reload",
+                "--port",
+                "8000"
+            ],
+            "jinja": true,
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/backend"
+            },
+            "console": "integratedTerminal",
+            "python": "${workspaceFolder}/backend/.venv/bin/python"
+        },
+        {
+            "name": "Frontend: Vite",
+            "type": "node",
+            "request": "launch",
+            "cwd": "${workspaceFolder}/frontend",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "dev"
+            ],
+            "serverReadyAction": {
+                "pattern": "Local:\\s+(http://localhost:\\d+/)",
+                "action": "openExternally"
+            },
+            "console": "integratedTerminal"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Full Stack",
+            "configurations": [
+                "Backend: FastAPI",
+                "Frontend: Vite"
+            ]
+        }
+    ]
+}
