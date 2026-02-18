@@ -22,6 +22,37 @@
             "python": "${workspaceFolder}/backend/.venv/bin/python"
         },
         {
+            "name": "App: Consolidated (Backend serves Frontend)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "cwd": "${workspaceFolder}/backend",
+            "args": [
+                "app.main:app",
+                "--port",
+                "8000"
+            ],
+            "jinja": true,
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/backend"
+            },
+            "console": "integratedTerminal",
+            "python": "${workspaceFolder}/backend/.venv/bin/python",
+            "preLaunchTask": "build-frontend"
+        },
+        {
+            "name": "App: Docker (docker-compose up)",
+            "type": "node",
+            "request": "launch",
+            "preLaunchTask": "docker-up",
+            "serverReadyAction": {
+                "action": "openExternally",
+                "pattern": ".*",
+                "uriFormat": "http://localhost:8000"
+            }
+        },
+        {
             "name": "Frontend: Vite",
             "type": "node",
             "request": "launch",

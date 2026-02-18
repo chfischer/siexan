@@ -47,6 +47,7 @@ class TransactionBase(BaseModel):
     is_transfer: bool = False
     to_account_id: Optional[int] = None
     raw_data: Optional[Dict[str, Any]] = None
+    is_manual: bool = False
 
 class TransactionCreate(TransactionBase):
     pass
@@ -58,6 +59,12 @@ class Transaction(TransactionBase):
     labels: List[Label] = []
     class Config:
         from_attributes = True
+
+class TransactionUpdate(BaseModel):
+    category_id: Optional[int] = None
+    is_transfer: Optional[bool] = None
+    to_account_id: Optional[int] = None
+    is_manual: Optional[bool] = None
 
 class CSVProfileBase(BaseModel):
     name: str
@@ -82,6 +89,12 @@ class CategorizationRuleBase(BaseModel):
 
 class CategorizationRuleCreate(CategorizationRuleBase):
     pass
+
+class CategorizationRuleUpdate(BaseModel):
+    pattern: Optional[str] = None
+    target_category_id: Optional[int] = None
+    target_account_id: Optional[int] = None
+    target_label_id: Optional[int] = None
 
 class CategorizationRule(CategorizationRuleBase):
     id: int

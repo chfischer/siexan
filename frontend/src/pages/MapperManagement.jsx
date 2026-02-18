@@ -11,7 +11,11 @@ function MapperManagement() {
     const [descriptionFields, setDescriptionFields] = useState([''])
     const [newProfile, setNewProfile] = useState({
         name: '',
-        column_mapping: { date: '', amount: '', credit: '', debit: '', description: [] },
+        column_mapping: {
+            date: '', amount: '', credit: '', debit: '', description: [],
+            amount_type: '', credit_indicators: 'C,CR,CREDIT', debit_indicators: 'D,DR,DEBIT',
+            invert_amount: false
+        },
         date_format: '%Y-%m-%d',
         delimiter: ',',
         header_row: 0
@@ -83,7 +87,11 @@ function MapperManagement() {
             await axios.post('/api/profiles/', { ...newProfile, column_mapping: finalMapping })
             setNewProfile({
                 name: '',
-                column_mapping: { date: '', amount: '', credit: '', debit: '', description: [] },
+                column_mapping: {
+                    date: '', amount: '', credit: '', debit: '', description: [],
+                    amount_type: '', credit_indicators: 'C,CR,CREDIT', debit_indicators: 'D,DR,DEBIT',
+                    invert_amount: false
+                },
                 date_format: '%Y-%m-%d',
                 delimiter: ',',
                 header_row: 0
@@ -282,6 +290,78 @@ function MapperManagement() {
                                 )}
                             </div>
                         </div>
+
+                        {/* Amount Options */}
+                        {(newProfile.column_mapping.amount || isDualAmount) && (
+                            <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '0.5rem', border: '1px solid var(--border)' }}>
+                                <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.875rem' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={newProfile.column_mapping.invert_amount}
+                                            onChange={e => setNewProfile({
+                                                ...newProfile,
+                                                column_mapping: { ...newProfile.column_mapping, invert_amount: e.target.checked }
+                                            })}
+                                        />
+                                        Invert Amount (Flip signs)
+                                    </label>
+                                </div>
+                                {!isDualAmount && (
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                        <div>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', opacity: 0.7 }}>Indicator/Type Column (Optional)</label>
+                                            <select
+                                                value={newProfile.column_mapping.amount_type}
+                                                onChange={e => setNewProfile({
+                                                    ...newProfile,
+                                                    column_mapping: { ...newProfile.column_mapping, amount_type: e.target.value }
+                                                })}
+                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '0.4rem', background: 'var(--bg-deep)', border: '1px solid var(--border)', color: 'white' }}
+                                            >
+                                                <option value="">No Type Column</option>
+                                                {headers.map(h => <option key={h} value={h}>{h}</option>)}
+                                            </select>
+                                        </div>
+                                        {newProfile.column_mapping.amount_type && (
+                                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                <div style={{ flex: 1 }}>
+                                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', opacity: 0.7 }}>Credit Symbols</label>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="C,CR,+"
+                                                        value={newProfile.column_mapping.credit_indicators}
+                                                        onChange={e => setNewProfile({
+                                                            ...newProfile,
+                                                            column_mapping: { ...newProfile.column_mapping, credit_indicators: e.target.value }
+                                                        })}
+                                                        style={{ width: '100%', padding: '0.5rem', borderRadius: '0.4rem', background: 'var(--bg-deep)', border: '1px solid var(--border)', color: 'white' }}
+                                                    />
+                                                </div>
+                                                <div style={{ flex: 1 }}>
+                                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', opacity: 0.7 }}>Debit Symbols</label>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="D,DR,-"
+                                                        value={newProfile.column_mapping.debit_indicators}
+                                                        onChange={e => setNewProfile({
+                                                            ...newProfile,
+                                                            column_mapping: { ...newProfile.column_mapping, debit_indicators: e.target.value }
+                                                        })}
+                                                        style={{ width: '100%', padding: '0.5rem', borderRadius: '0.4rem', background: 'var(--bg-deep)', border: '1px solid var(--border)', color: 'white' }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                                    {!isDualAmount
+                                        ? "Indicator column overrides the sign of the amount based on the symbols provided (comma-separated)."
+                                        : "In dual mode, the system calculates [Credit] - [Debit] using magnitudes. Use 'Invert' if your mapping results in flipped signs."}
+                                </p>
+                            </div>
+                        )}
 
                         <div>
                             <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 600 }}>Description Fields (Concatenated)</label>

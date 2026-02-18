@@ -81,6 +81,10 @@ class TransactionCategorizer:
 
         # Layer 2: Heuristic (Regex)
         for entry in self.regex_patterns:
+            # Skip label rules in the main categorization waterfall
+            if entry["category"].startswith("__ID_LABEL__:"):
+                continue
+                
             if entry["pattern"].search(description):
                 return {
                     "category": entry["category"],

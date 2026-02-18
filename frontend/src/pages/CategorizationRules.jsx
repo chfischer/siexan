@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
-import { Plus, Trash2, Tag, Hash, AlertCircle, Search, ChevronRight, PlusCircle, Download, FileUp } from 'lucide-react'
+import { Plus, Trash2, Tag, Hash, AlertCircle, Search, ChevronRight, PlusCircle, Download, FileUp, Edit3 } from 'lucide-react'
+import EditRuleModal from '../components/EditRuleModal'
 import Notification from '../components/Notification'
 
 function CategorizationRules({ refreshTrigger }) {
@@ -17,6 +18,7 @@ function CategorizationRules({ refreshTrigger }) {
     const [newRulePattern, setNewRulePattern] = useState('')
     const [error, setError] = useState(null)
     const [searchQuery, setSearchQuery] = useState('')
+    const [editingRule, setEditingRule] = useState(null)
 
     useEffect(() => {
         fetchData()
@@ -68,7 +70,7 @@ function CategorizationRules({ refreshTrigger }) {
             fetchData()
             setNotification({
                 type: 'success',
-                message: `Rule created! Rules processed.`
+                message: `Rule created! ${res.data.changes} transactions updated (${res.data.matches} matches found).`
             })
         } catch (err) {
             setError('Failed to create matching rule')
@@ -147,9 +149,17 @@ function CategorizationRules({ refreshTrigger }) {
         e.target.value = null
     }
 
-    const filteredCategories = categories.filter(cat =>
-        cat.name.toLowerCase().includes(searchQuery.toLowerCase())
-    )
+    const getCategoryPath = (catId) => {
+        const cat = categories.find(c => c.id === catId)
+        if (!cat) return 'Uncategorized'
+        if (!cat.parent_id) return cat.name
+        return `${getCategoryPath(cat.parent_id)} / ${cat.name}`
+    }
+
+    const filteredCategories = categories
+        .map(cat => ({ ...cat, fullPath: getCategoryPath(cat.id) }))
+        .filter(cat => cat.fullPath.toLowerCase().includes(searchQuery.toLowerCase()))
+        .sort((a, b) => a.fullPath.localeCompare(b.fullPath))
 
     return (
         <div className="rules-page">
@@ -242,11 +252,19 @@ function CategorizationRules({ refreshTrigger }) {
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                                             {accountRules.map(rule => (
                                                 <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.8rem', background: 'rgba(255,255,255,0.05)', borderRadius: '0.4rem', border: '1px solid var(--border)', fontSize: '0.85rem' }}>
-                                                    <Hash size={14} className="text-muted" />
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                                                        <Hash size={12} />
+                                                        <span>{rule.id}</span>
+                                                    </div>
                                                     <code>{rule.pattern}</code>
-                                                    <button onClick={() => handleDeleteRule(rule.id)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--danger)', cursor: 'pointer', opacity: 0.6, hover: { opacity: 1 } }}>
-                                                        <Trash2 size={12} />
-                                                    </button>
+                                                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                                        <button onClick={() => setEditingRule(rule)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--primary)', cursor: 'pointer', opacity: 0.6 }}>
+                                                            <Edit3 size={12} />
+                                                        </button>
+                                                        <button onClick={() => handleDeleteRule(rule.id)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--danger)', cursor: 'pointer', opacity: 0.6 }}>
+                                                            <Trash2 size={12} />
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -305,11 +323,19 @@ function CategorizationRules({ refreshTrigger }) {
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                                             {labelRules.map(rule => (
                                                 <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.8rem', background: 'rgba(255,255,255,0.05)', borderRadius: '0.4rem', border: '1px solid var(--border)', fontSize: '0.85rem' }}>
-                                                    <Hash size={14} className="text-muted" />
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                                                        <Hash size={12} />
+                                                        <span>{rule.id}</span>
+                                                    </div>
                                                     <code>{rule.pattern}</code>
-                                                    <button onClick={() => handleDeleteRule(rule.id)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--danger)', cursor: 'pointer', opacity: 0.6 }}>
-                                                        <Trash2 size={12} />
-                                                    </button>
+                                                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                                        <button onClick={() => setEditingRule(rule)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--primary)', cursor: 'pointer', opacity: 0.6 }}>
+                                                            <Edit3 size={12} />
+                                                        </button>
+                                                        <button onClick={() => handleDeleteRule(rule.id)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--danger)', cursor: 'pointer', opacity: 0.6 }}>
+                                                            <Trash2 size={12} />
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -344,7 +370,7 @@ function CategorizationRules({ refreshTrigger }) {
                                             <Tag size={20} />
                                         </div>
                                         <div>
-                                            <h3 style={{ margin: 0 }}>{category.name}</h3>
+                                            <h3 style={{ margin: 0 }}>{category.fullPath}</h3>
                                             <span className="text-muted small">{categoryRules.length} matching rules</span>
                                         </div>
                                     </div>
@@ -381,16 +407,29 @@ function CategorizationRules({ refreshTrigger }) {
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
                                         {categoryRules.map(rule => (
                                             <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.5rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border)' }}>
-                                                <Hash size={14} className="text-muted" />
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                                                    <Hash size={12} />
+                                                    <span>{rule.id}</span>
+                                                </div>
                                                 <code style={{ fontSize: '0.9rem' }}>{rule.pattern}</code>
-                                                <button
-                                                    onClick={() => handleDeleteRule(rule.id)}
-                                                    style={{ background: 'none', border: 'none', color: 'var(--text-muted)', display: 'flex', padding: '2px' }}
-                                                    onMouseEnter={(e) => e.currentTarget.style.color = 'var(--danger)'}
-                                                    onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
+                                                <div style={{ display: 'flex', gap: '0.4rem', marginLeft: '0.25rem' }}>
+                                                    <button
+                                                        onClick={() => setEditingRule(rule)}
+                                                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', display: 'flex', padding: '2px', cursor: 'pointer' }}
+                                                        onMouseEnter={(e) => e.currentTarget.style.color = 'var(--primary)'}
+                                                        onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                                                    >
+                                                        <Edit3 size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDeleteRule(rule.id)}
+                                                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', display: 'flex', padding: '2px', cursor: 'pointer' }}
+                                                        onMouseEnter={(e) => e.currentTarget.style.color = 'var(--danger)'}
+                                                        onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
                                             </div>
                                         ))}
                                         {categoryRules.length === 0 && !addingRuleTo && (
@@ -492,6 +531,23 @@ function CategorizationRules({ refreshTrigger }) {
                     type={notification.type}
                     message={notification.message}
                     onClose={() => setNotification(null)}
+                />
+            )}
+
+            {editingRule && (
+                <EditRuleModal
+                    rule={editingRule}
+                    categories={categories}
+                    accounts={accounts}
+                    labels={labels}
+                    onClose={() => setEditingRule(null)}
+                    onRuleUpdated={(data) => {
+                        fetchData()
+                        setNotification({
+                            type: 'success',
+                            message: `Rule updated! ${data.changes} transactions updated (${data.matches} matches found).`
+                        })
+                    }}
                 />
             )}
         </div>

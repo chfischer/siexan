@@ -37,6 +37,38 @@ function QuickCategorizeModal({ transaction, onClose, onRuleCreated }) {
         fetchListData()
     }, [])
 
+    const renderHighlights = (text, pat) => {
+        if (!pat || pat.trim() === '') return text;
+        try {
+            // Use capturing group to keep the delimiters in split
+            const regex = new RegExp(`(${pat})`, 'gi');
+            const parts = text.split(regex);
+            return parts.map((part, i) => {
+                // Check if this part is a match
+                if (part && new RegExp(`^(${pat})$`, 'i').test(part)) {
+                    return (
+                        <mark
+                            key={i}
+                            style={{
+                                backgroundColor: 'rgba(99, 102, 241, 0.4)',
+                                color: 'white',
+                                borderBottom: '2px solid var(--primary)',
+                                borderRadius: '2px',
+                                padding: '0 2px',
+                                margin: '0 1px'
+                            }}
+                        >
+                            {part}
+                        </mark>
+                    );
+                }
+                return part;
+            });
+        } catch (e) {
+            return text;
+        }
+    };
+
     const handleSave = async () => {
         if (!pattern.trim()) return
 
@@ -107,13 +139,57 @@ function QuickCategorizeModal({ transaction, onClose, onRuleCreated }) {
 
                 <div style={{ marginBottom: '1rem' }}>
                     <label className="text-muted small" style={{ display: 'block', marginBottom: '0.25rem' }}>Transaction Description</label>
-                    <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border)', fontSize: '0.9rem' }}>
-                        {transaction.description}
+                    <div style={{
+                        background: 'rgba(255,255,255,0.05)',
+                        padding: '0.75rem',
+                        borderRadius: '0.5rem',
+                        border: '1px solid var(--border)',
+                        fontSize: '0.9rem',
+                        lineHeight: '1.5',
+                        wordBreak: 'break-word'
+                    }}>
+                        {renderHighlights(transaction.description, pattern)}
                     </div>
                 </div>
 
                 <div className="form-group" style={{ marginBottom: '1rem' }}>
-                    <label className="small" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Matching Pattern</label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <label className="small" style={{ fontWeight: 600 }}>Matching Pattern</label>
+                        {(() => {
+                            try {
+                                if (!pattern.trim()) return null
+                                const regex = new RegExp(pattern, 'i')
+                                const isMatch = regex.test(transaction.description)
+                                return (
+                                    <span style={{
+                                        fontSize: '0.7rem',
+                                        fontWeight: 700,
+                                        padding: '0.1rem 0.5rem',
+                                        borderRadius: '1rem',
+                                        background: isMatch ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                        color: isMatch ? 'var(--success)' : 'var(--danger)',
+                                        border: `1px solid ${isMatch ? 'var(--success)' : 'var(--danger)'}`
+                                    }}>
+                                        {isMatch ? 'MATCHES' : 'NO MATCH'}
+                                    </span>
+                                )
+                            } catch (e) {
+                                return (
+                                    <span style={{
+                                        fontSize: '0.7rem',
+                                        fontWeight: 700,
+                                        padding: '0.1rem 0.5rem',
+                                        borderRadius: '1rem',
+                                        background: 'rgba(239, 68, 68, 0.1)',
+                                        color: 'var(--danger)',
+                                        border: '1px solid var(--danger)'
+                                    }}>
+                                        INVALID REGEX
+                                    </span>
+                                )
+                            }
+                        })()}
+                    </div>
                     <input
                         type="text"
                         className="form-control"
@@ -121,6 +197,17 @@ function QuickCategorizeModal({ transaction, onClose, onRuleCreated }) {
                         onChange={(e) => setPattern(e.target.value)}
                         placeholder="e.g. COOP or UBER.*"
                         autoFocus
+                        style={{
+                            borderColor: (() => {
+                                try {
+                                    if (!pattern.trim()) return 'var(--border)'
+                                    const regex = new RegExp(pattern, 'i')
+                                    return regex.test(transaction.description) ? 'var(--success)' : 'var(--danger)'
+                                } catch (e) {
+                                    return 'var(--danger)'
+                                }
+                            })()
+                        }}
                     />
                     <div className="text-muted x-small" style={{ marginTop: '0.6rem', padding: '0.6rem', background: 'rgba(255,255,255,0.03)', borderRadius: '0.4rem', border: '1px solid var(--border)' }}>
                         <p style={{ margin: '0 0 0.4rem 0', fontWeight: 600 }}>Pattern Examples:</p>
@@ -207,7 +294,7 @@ function QuickCategorizeModal({ transaction, onClose, onRuleCreated }) {
                             <input
                                 type="text"
                                 className="form-control"
-                                placeholder="e.g. Shopping"
+                                placeholder="e.g. Salary/Anna"
                                 value={newCategoryName}
                                 onChange={(e) => setNewCategoryName(e.target.value)}
                                 autoFocus
@@ -220,9 +307,23 @@ function QuickCategorizeModal({ transaction, onClose, onRuleCreated }) {
                                 required
                             >
                                 <option value="">Select a category...</option>
-                                {categories.map(cat => (
-                                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                                ))}
+                                {[...categories]
+                                    .map(cat => ({
+                                        ...cat, fullPath: (() => {
+                                            const getPath = (id) => {
+                                                const c = categories.find(x => x.id === id)
+                                                if (!c) return ''
+                                                if (!c.parent_id) return c.name
+                                                return `${getPath(c.parent_id)} / ${c.name}`
+                                            }
+                                            return getPath(cat.id)
+                                        })()
+                                    }))
+                                    .sort((a, b) => a.fullPath.localeCompare(b.fullPath))
+                                    .map(cat => (
+                                        <option key={cat.id} value={cat.id}>{cat.fullPath}</option>
+                                    ))
+                                }
                             </select>
                         )}
                     </div>

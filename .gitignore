@@ -9,3 +9,7 @@ npm_cache/
 logs/
 data/
 !data/.gitkeep
+test_*.py
+reproduce_*.py
+backend/migrate_*.py
+backend/test_*.py

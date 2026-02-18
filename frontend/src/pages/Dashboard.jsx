@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
-import { Calendar, ChevronDown, Filter, Tag, X, ArrowDown } from 'lucide-react'
+import { Calendar, ChevronDown, Filter, Tag, X, ArrowDown, Trash2 } from 'lucide-react'
 import { getElementAtEvent } from 'react-chartjs-2'
 import {
     Chart as ChartJS,
@@ -12,7 +12,7 @@ import {
     BarElement,
     Title,
 } from 'chart.js'
-import { Pie } from 'react-chartjs-2'
+import { Pie, Bar } from 'react-chartjs-2'
 
 ChartJS.register(
     ArcElement,
@@ -33,7 +33,10 @@ function Dashboard({ refreshTrigger }) {
     const [selectedCategory, setSelectedCategory] = useState(null)
     const [detailTransactions, setDetailTransactions] = useState([])
     const [loadingDetails, setLoadingDetails] = useState(false)
+    const [monthlyData, setMonthlyData] = useState([])
+    const [loadingMonthly, setLoadingMonthly] = useState(true)
     const chartRef = React.useRef(null)
+    const barChartRef = React.useRef(null)
 
     const getDatesForPeriod = (selectedPeriod) => {
         const now = new Date()
@@ -48,6 +51,8 @@ function Dashboard({ refreshTrigger }) {
             end = new Date(now.getFullYear(), now.getMonth(), 0)
         } else if (selectedPeriod === 'custom') {
             return { start: customStart, end: customEnd }
+        } else if (selectedPeriod === 'all') {
+            return { start: null, end: null }
         }
 
         const format = (d) => d ? d.toISOString().split('T')[0] : null
@@ -77,8 +82,42 @@ function Dashboard({ refreshTrigger }) {
             }
         }
         fetchSummary()
-        setSelectedCategory(null) // Reset selection when period changes
+        setSelectedCategory(null)
     }, [refreshTrigger, period, customStart, customEnd])
+
+    const fetchMonthly = async () => {
+        setLoadingMonthly(true)
+        try {
+            const res = await axios.get('/api/analytics/monthly')
+            setMonthlyData(res.data)
+        } catch (err) {
+            console.error("Error fetching monthly data", err)
+        } finally {
+            setLoadingMonthly(false)
+        }
+    }
+
+    const handleDelete = async (id) => {
+        if (!window.confirm("Delete this transaction?")) return
+        try {
+            await axios.delete(`/api/transactions/${id}`)
+            // After deletion, refresh the summary and details if a category is selected
+            // This will trigger the useEffects that fetch data
+            setRefreshTrigger(prev => prev + 1)
+            // If a category is selected, re-fetch its details
+            if (selectedCategory) {
+                setSelectedCategory(null) // Clear to force re-fetch
+                setTimeout(() => setSelectedCategory(selectedCategory), 0)
+            }
+        } catch (err) {
+            console.error("Error deleting transaction", err)
+            alert("Failed to delete transaction")
+        }
+    }
+
+    useEffect(() => {
+        fetchMonthly()
+    }, [refreshTrigger])
 
     useEffect(() => {
         const fetchDetails = async () => {
@@ -87,9 +126,11 @@ function Dashboard({ refreshTrigger }) {
             const { start, end } = getDatesForPeriod(period)
             try {
                 const params = { start_date: start, end_date: end, limit: 100 }
-                if (selectedCategory.category === 'Uncategorized') {
+                if (selectedCategory.isMonthlyTotal) {
+                    // Fetch all for this period
+                } else if (selectedCategory.category === 'Uncategorized') {
                     params.is_uncategorized = true
-                } else {
+                } else if (!selectedCategory.isMonthlyTotal) {
                     params.category_id = selectedCategory.category_id
                 }
                 const res = await axios.get('/api/transactions/', { params })
@@ -101,7 +142,7 @@ function Dashboard({ refreshTrigger }) {
             }
         }
         fetchDetails()
-    }, [selectedCategory, period])
+    }, [selectedCategory, period, refreshTrigger]) // Added refreshTrigger here to re-fetch details after delete
 
     const onChartClick = (event) => {
         const element = getElementAtEvent(chartRef.current, event)
@@ -112,6 +153,72 @@ function Dashboard({ refreshTrigger }) {
             setTimeout(() => {
                 document.getElementById('details-section')?.scrollIntoView({ behavior: 'smooth' })
             }, 100)
+        }
+    }
+
+    const barData = {
+        labels: monthlyData.map(d => d.month),
+        datasets: [
+            {
+                label: 'Inflow',
+                data: monthlyData.map(d => d.inflow),
+                backgroundColor: '#10b981',
+                borderRadius: 4,
+            },
+            {
+                label: 'Outflow',
+                data: monthlyData.map(d => d.outflow),
+                backgroundColor: '#ef4444',
+                borderRadius: 4,
+            }
+        ]
+    }
+
+    const barOptions = {
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: true,
+                position: 'top',
+                labels: { color: 'white', font: { size: 12 } }
+            },
+            tooltip: {
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                padding: 12,
+                titleFont: { size: 14, weight: 'bold' },
+                bodyFont: { size: 13 }
+            }
+        },
+        scales: {
+            x: {
+                grid: { display: false },
+                ticks: { color: 'rgba(255, 255, 255, 0.7)' }
+            },
+            y: {
+                grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                ticks: { color: 'rgba(255, 255, 255, 0.7)' }
+            }
+        },
+        onClick: (e, elements) => {
+            if (elements.length > 0) {
+                const index = elements[0].index
+                const item = monthlyData[index]
+                const [year, month] = item.month.split('-')
+
+                // Set custom range for that month
+                const start = `${year}-${month}-01`
+                const lastDay = new Date(year, month, 0).getDate()
+                const end = `${year}-${month}-${lastDay}`
+
+                setCustomStart(start)
+                setCustomEnd(end)
+                setPeriod('custom')
+                setSelectedCategory({ category: `Transactions for ${item.month}`, isMonthlyTotal: true })
+
+                setTimeout(() => {
+                    document.getElementById('details-section')?.scrollIntoView({ behavior: 'smooth' })
+                }, 100)
+            }
         }
     }
 
@@ -176,6 +283,18 @@ function Dashboard({ refreshTrigger }) {
                     )}
                 </div>
             </header>
+
+            {!loadingMonthly && monthlyData.length > 0 && (
+                <div className="glass-card" style={{ marginBottom: '2rem', height: '350px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <h2 style={{ margin: 0 }}>Cash Flow Trend</h2>
+                        <span className="text-muted small">Click bars to filter by month</span>
+                    </div>
+                    <div style={{ height: '260px' }}>
+                        <Bar data={barData} options={barOptions} />
+                    </div>
+                </div>
+            )}
 
             {loading ? (
                 <div style={{ height: '400px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -259,7 +378,7 @@ function Dashboard({ refreshTrigger }) {
                                 <ArrowDown size={20} />
                             </div>
                             <div>
-                                <h2 style={{ margin: 0 }}>{selectedCategory.category} Details</h2>
+                                <h2 style={{ margin: 0 }}>{selectedCategory.category} {selectedCategory.isMonthlyTotal ? '' : 'Details'}</h2>
                                 <p className="text-muted small">Showing transactions for selected period</p>
                             </div>
                         </div>
@@ -280,6 +399,7 @@ function Dashboard({ refreshTrigger }) {
                                         <th style={{ padding: '1rem' }}>Date</th>
                                         <th style={{ padding: '1rem' }}>Description</th>
                                         <th style={{ padding: '1rem', textAlign: 'right' }}>Amount</th>
+                                        <th style={{ padding: '1rem', textAlign: 'right' }}>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -293,13 +413,24 @@ function Dashboard({ refreshTrigger }) {
                                                 color: t.amount < 0 ? 'var(--danger)' : 'var(--success)',
                                                 fontWeight: 600
                                             }}>
-                                                ${Math.abs(t.amount).toFixed(2)}
+                                                ${t.amount.toFixed(2)}
+                                            </td>
+                                            <td style={{ textAlign: 'right', padding: '1rem' }}>
+                                                <button
+                                                    onClick={() => handleDelete(t.id)}
+                                                    className="btn-icon"
+                                                    style={{ color: 'var(--text-muted)', opacity: 0.5 }}
+                                                    onMouseEnter={(e) => e.currentTarget.style.color = 'var(--danger)'}
+                                                    onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
                                             </td>
                                         </tr>
                                     ))}
                                     {detailTransactions.length === 0 && (
                                         <tr>
-                                            <td colSpan="3" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                            <td colSpan="4" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                                                 No specific transactions found.
                                             </td>
                                         </tr>

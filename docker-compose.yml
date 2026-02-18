@@ -1,0 +1,15 @@
+services:
+  siexan:
+    build: .
+    container_name: siexan
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - siexan_db:/app/backend
+    environment:
+      - CURRENT_DB=expense_app.db
+    restart: unless-stopped
+
+volumes:
+  siexan_db:

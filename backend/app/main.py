@@ -1,4 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+import os
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Body, APIRouter, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import pandas as pd
@@ -11,13 +14,37 @@ from .config import get_config, save_config, get_db_path
 # Ensure tables exist on startup for the current DB
 Base.metadata.create_all(bind=engine)
 
+# Migration: Add is_manual column to transactions if it doesn't exist
+try:
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        # Check if column exists
+        result = conn.execute(text("PRAGMA table_info(transactions)"))
+        columns = [row[1] for row in result]
+        if "is_manual" not in columns:
+            print("DEBUG: Migration - Adding is_manual column to transactions table")
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN is_manual INTEGER DEFAULT 0"))
+            conn.commit()
+except Exception as e:
+    print(f"DEBUG: Migration failed or column exists: {e}")
+
 app = FastAPI(title="siexan - Simple Expense Analyser")
+
+@app.middleware("http")
+async def strip_api_prefix(request: Request, call_next):
+    # If the path starts with /api/, strip it so it matches our routes
+    if request.url.path.startswith("/api/"):
+        scope = request.scope
+        original_path = scope["path"]
+        # /api/something -> /something
+        scope["path"] = original_path[4:]
+        
+    return await call_next(request)
 
 # --- Database Management Endpoints ---
 
 @app.get("/databases/")
 def list_databases():
-    import os
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     files = [f for f in os.listdir(base_dir) if f.endswith(".db")]
     current = get_config().get("current_db", "expense_app.db")
@@ -25,7 +52,6 @@ def list_databases():
 
 @app.post("/databases/select")
 def select_database(db_name: str):
-    import os
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(base_dir, db_name)
     if not db_name.endswith(".db"):
@@ -44,7 +70,6 @@ def select_database(db_name: str):
 
 @app.post("/databases/create")
 def create_database(db_name: str):
-    import os
     if not db_name.endswith(".db"):
         db_name += ".db"
         
@@ -63,8 +88,14 @@ def run_seed(db: Session = Depends(get_db)):
     return {"message": "Database seeded successfully"}
 
 @app.get("/")
-def read_root():
-    return {"message": "Welcome to the Expense Analysis API"}
+async def read_root():
+    # If we are in consolidated mode (Docker or local build), serve the frontend
+    # Otherwise, return a simple API message
+    frontend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "frontend", "dist")
+    index_path = os.path.join(frontend_path, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"message": "Welcome to the Expense Analysis API (Backend Only)"}
 
 # --- CSV Profile Endpoints ---
 
@@ -109,15 +140,32 @@ def read_accounts(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 
 @app.post("/categories/", response_model=schemas.Category)
 def create_category(category: schemas.CategoryCreate, db: Session = Depends(get_db)):
-    # Check for existing category to avoid IntegrityError
-    existing = db.query(models.Category).filter(models.Category.name == category.name).first()
-    if existing:
-        return existing
-    db_category = models.Category(**category.dict())
-    db.add(db_category)
-    db.commit()
-    db.refresh(db_category)
-    return db_category
+    # Support hierarchical names via slash notation (e.g., "Salary/Anna")
+    parts = [p.strip() for p in category.name.split('/')]
+    
+    current_parent_id = None
+    last_cat = None
+    
+    for part in parts:
+        # Check if category exists at this level
+        existing = db.query(models.Category).filter(
+            models.Category.name == part,
+            models.Category.parent_id == current_parent_id
+        ).first()
+        
+        if existing:
+            last_cat = existing
+        else:
+            # Create new category
+            new_cat = models.Category(name=part, parent_id=current_parent_id)
+            db.add(new_cat)
+            db.commit()
+            db.refresh(new_cat)
+            last_cat = new_cat
+            
+        current_parent_id = last_cat.id
+        
+    return last_cat
 
 @app.get("/categories/", response_model=List[schemas.Category])
 def read_categories(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
@@ -135,25 +183,60 @@ def create_rule(rule: schemas.CategorizationRuleCreate, db: Session = Depends(ge
     
     # Auto-trigger categorization
     from .categorization import recategorize_all
-    count, _ = recategorize_all(db)
+    matches, changes, _ = recategorize_all(db)
     
     return {
         "rule": db_rule,
-        "categorized_count": count
+        "matches": matches,
+        "changes": changes
     }
 
 @app.get("/rules/", response_model=List[schemas.CategorizationRule])
 def read_rules(db: Session = Depends(get_db)):
     return db.query(models.CategorizationRule).all()
 
+@app.put("/rules/{rule_id}")
+def update_rule(rule_id: int, rule_update: schemas.CategorizationRuleUpdate, db: Session = Depends(get_db)):
+    db_rule = db.query(models.CategorizationRule).filter(models.CategorizationRule.id == rule_id).first()
+    if not db_rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    
+    update_data = rule_update.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_rule, key, value)
+    
+    db.commit()
+    db.refresh(db_rule)
+    
+    # Auto-trigger categorization
+    from .categorization import recategorize_all
+    matches, changes, _ = recategorize_all(db)
+    
+    return {
+        "rule": db_rule,
+        "matches": matches,
+        "changes": changes
+    }
+
+@app.delete("/rules/{rule_id}")
+def delete_rule(rule_id: int, db: Session = Depends(get_db)):
+    db_rule = db.query(models.CategorizationRule).filter(models.CategorizationRule.id == rule_id).first()
+    if not db_rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    
+    db.delete(db_rule)
+    db.commit()
+    return {"message": "Rule deleted"}
+
 @app.post("/rules/re-categorize/")
 def recategorize_transactions(db: Session = Depends(get_db)):
     from .categorization import recategorize_all
     try:
-        count, failed_rules = recategorize_all(db)
+        matches, changes, failed_rules = recategorize_all(db)
         return {
-            "message": f"Successfully processed {count} transactions",
-            "count": count,
+            "message": f"Re-categorization complete! {changes} transactions were updated, {matches} patterns matched.",
+            "count": changes,
+            "matches": matches,
             "failed_rules": failed_rules
         }
     except Exception as e:
@@ -438,6 +521,24 @@ def get_transaction_stats(db: Session = Depends(get_db)):
         "uncategorized": uncategorized
     }
 
+@app.put("/transactions/{transaction_id}", response_model=schemas.Transaction)
+def update_transaction(transaction_id: int, tx_update: schemas.TransactionUpdate, db: Session = Depends(get_db)):
+    db_tx = db.query(models.Transaction).filter(models.Transaction.id == transaction_id).first()
+    if not db_tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    update_data = tx_update.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_tx, key, value)
+    
+    # If the user updated category, transfer status or specifically is_manual
+    if "category_id" in update_data or "is_transfer" in update_data or "to_account_id" in update_data:
+        db_tx.is_manual = 1
+    
+    db.commit()
+    db.refresh(db_tx)
+    return db_tx
+
 @app.post("/upload-csv/")
 async def upload_csv(
     account_id: int,
@@ -511,7 +612,62 @@ async def upload_csv(
         "skipped": skipped_count
     }
 
+@app.delete("/transactions/{transaction_id}")
+def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
+    tx = db.query(models.Transaction).filter(models.Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    db.delete(tx)
+    db.commit()
+    return {"message": "Transaction deleted successfully"}
+
+@app.delete("/transactions/bulk/")
+def bulk_delete_transactions(transaction_ids: List[int] = Body(...), db: Session = Depends(get_db)):
+    db.query(models.Transaction).filter(models.Transaction.id.in_(transaction_ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"message": f"{len(transaction_ids)} transactions deleted successfully"}
+
 # --- Analytics Endpoints ---
+
+@app.get("/analytics/monthly")
+def get_monthly_analytics(db: Session = Depends(get_db)):
+    from sqlalchemy import func
+    
+    # 1. Monthly income
+    income_query = db.query(
+        func.strftime('%Y-%m', models.Transaction.date).label("month"),
+        func.sum(models.Transaction.amount).label("inflow")
+    ).filter(
+        models.Transaction.is_transfer == 0,
+        models.Transaction.amount > 0
+    ).group_by("month").all()
+    
+    # 2. Monthly spending
+    spending_query = db.query(
+        func.strftime('%Y-%m', models.Transaction.date).label("month"),
+        func.sum(models.Transaction.amount).label("outflow")
+    ).filter(
+        models.Transaction.is_transfer == 0,
+        models.Transaction.amount < 0
+    ).group_by("month").all()
+    
+    # Merge results
+    months = sorted(list(set([r[0] for r in income_query] + [r[0] for r in spending_query])))
+    
+    income_map = {r[0]: r[1] for r in income_query}
+    spending_map = {r[0]: abs(r[1]) for r in spending_query}
+    
+    result = []
+    for m in months:
+        if not m: continue # Skip null months if any
+        result.append({
+            "month": m,
+            "inflow": income_map.get(m, 0.0),
+            "outflow": spending_map.get(m, 0.0)
+        })
+    
+    return result
 
 @app.get("/analytics/summary")
 def get_summary(
@@ -556,3 +712,21 @@ def get_summary(
         "total_income": total_income,
         "total_spending": abs(total_spending)
     }
+
+# --- Static File Serving (for Docker) ---
+
+# Try to serve static files from /app/frontend/dist if it exists
+# We need to go up 3 levels from backend/app/main.py to reach /app
+frontend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "frontend", "dist")
+
+if os.path.exists(frontend_path):
+    # Serve assets (js, css, etc)
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_path, "assets")), name="assets")
+    
+    # Catch-all for SPA: serve index.html for any path not handled by API
+    @app.get("/{rest_of_path:path}")
+    async def serve_spa(rest_of_path: str):
+        # Don't intercept API calls if they fail (they should return 404 or other)
+        # But since this is at the END, anything reaching here IS a 404 for API.
+        # For SPA routes (like /transactions), we return index.html
+        return FileResponse(os.path.join(frontend_path, "index.html"))

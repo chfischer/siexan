@@ -33,6 +33,7 @@ class Transaction(Base):
     is_transfer = Column(Integer, default=0) # 0 = False, 1 = True (SQLite compatibility)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     transaction_hash = Column(String, unique=True, index=True, nullable=True)
+    is_manual = Column(Integer, default=0) # 0 = Auto/Uncategorized, 1 = User set
 
     category = relationship("Category", back_populates="transactions")
     account = relationship("Account", foreign_keys=[account_id], back_populates="transactions")

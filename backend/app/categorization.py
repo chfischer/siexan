@@ -41,7 +41,10 @@ def get_categorizer(db: Session = None):
                     _categorizer._failed_rules.append({"pattern": rule.pattern, "error": str(e)})
     return _categorizer
 
-def categorize_transaction(db: Session, transaction: models.Transaction):
+def categorize_transaction(db: Session, transaction: models.Transaction, force: bool = False):
+    if transaction.is_manual and not force:
+        return False
+    
     categorizer = get_categorizer(db)
     result = categorizer.categorize(transaction.description)
     
@@ -68,20 +71,35 @@ def categorize_transaction(db: Session, transaction: models.Transaction):
             if lbl and lbl not in transaction.labels:
                 transaction.labels.append(lbl)
 
-    return result["category"] != "Uncategorized"
+    return (cat_str != "Uncategorized") or (len(labels_matched) > 0)
 
 def recategorize_all(db: Session):
     """
     Finds all transactions and re-applies rules (categorization + labels).
+    Tracks both total rule matches and actual transaction modifications.
     """
     failed_rules = sync_rules(db)
     transactions = db.query(models.Transaction).all()
-    count = 0
+    changes = 0
+    matches = 0
     for t in transactions:
+        if t.is_manual:
+            continue
+            
+        # Capture state before
+        old_state = (t.category_id, t.is_transfer, t.to_account_id, sorted([l.id for l in t.labels]))
+        
         if categorize_transaction(db, t):
-            count += 1
+            matches += 1
+        
+        # Capture state after
+        new_state = (t.category_id, t.is_transfer, t.to_account_id, sorted([l.id for l in t.labels]))
+        
+        if old_state != new_state:
+            changes += 1
+            
     db.commit()
-    return count, failed_rules
+    return matches, changes, failed_rules
 
 # Placeholder for AI/ML training call
 def train_categorizer(db: Session, csv_path: str):
