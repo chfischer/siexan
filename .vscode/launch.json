@@ -42,7 +42,7 @@
             "preLaunchTask": "build-frontend"
         },
         {
-            "name": "App: Docker (docker-compose up)",
+            "name": "App: Docker (build & up)",
             "type": "node",
             "request": "launch",
             "preLaunchTask": "docker-up",
