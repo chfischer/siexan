@@ -37,15 +37,23 @@ Siexan is a full-stack personal finance and expense management dashboard. It fea
 - Python 3.13+ & `uv` or `pip` (for local backend development)
 - Docker & Docker Compose (for containerized deployment)
 
-### Running Locally with Docker
+### Running Locally with Docker (Source)
 
-You can easily spin up the entire application using Docker Compose:
+You can easily spin up the entire application using Docker Compose to build from your local source code:
 
 ```bash
-docker-compose up --build
+docker-compose -f docker-compose.dev.yml up --build
 ```
 
-The application will be accessible via your browser.
+### Running in Production (Pre-built Image)
+
+If you just want to run the latest version without building from source, you can use the production configuration which pulls the image directly from the GitHub Container Registry:
+
+```bash
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+The application will be accessible via your browser at `http://localhost:8000`.
 
 ### Development Setup
 
