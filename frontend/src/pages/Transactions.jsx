@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
-import { PlusCircle, Search, Tag, Info, AlertCircle, Calendar, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Zap, User } from 'lucide-react'
+import { PlusCircle, Search, Tag, Info, AlertCircle, Calendar, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Zap, User, Settings } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import QuickCategorizeModal from '../components/QuickCategorizeModal'
 import Notification from '../components/Notification'
 
@@ -15,6 +16,9 @@ function Transactions({ refreshTrigger }) {
     const [notification, setNotification] = useState(null)
     const [localRefresh, setLocalRefresh] = useState(0)
     const [showOnlyUncategorized, setShowOnlyUncategorized] = useState(false)
+    const [showOnlyManual, setShowOnlyManual] = useState(false)
+    const [selectedFilterCategories, setSelectedFilterCategories] = useState([])
+    const [dropdownOpen, setDropdownOpen] = useState(false)
     const [period, setPeriod] = useState('last_month')
     const [customStart, setCustomStart] = useState('')
     const [customEnd, setCustomEnd] = useState('')
@@ -47,7 +51,7 @@ function Transactions({ refreshTrigger }) {
                 const { start, end } = getDatesForPeriod(period)
                 if (period === 'custom' && (!start || !end)) return
 
-                const params = { start_date: start, end_date: end }
+                const params = { start_date: start, end_date: end, limit: 5000 }
                 if (selectedAccountId) params.account_id = selectedAccountId
 
                 const [txRes, statsRes, accRes, catRes] = await Promise.all([
@@ -68,6 +72,16 @@ function Transactions({ refreshTrigger }) {
         }
         fetchData()
     }, [refreshTrigger, localRefresh, selectedAccountId, period, customStart, customEnd])
+
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (dropdownOpen && !e.target.closest('.multiselect-dropdown') && !e.target.closest('.multiselect-trigger')) {
+                setDropdownOpen(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [dropdownOpen])
 
     const handleReCategorize = async () => {
         try {
@@ -118,7 +132,7 @@ function Transactions({ refreshTrigger }) {
                 const res = await axios.post('/api/categories/', { name })
                 const newCat = res.data
                 setCategories([...categories, newCat])
-                await axios.put(`/api/transactions/${transactionId}`, { category_id: newCat.id })
+                await axios.patch(`/api/transactions/${transactionId}`, { category_id: newCat.id })
                 setLocalRefresh(prev => prev + 1)
             } catch (err) {
                 console.error("Failed to create/set category", err)
@@ -126,7 +140,7 @@ function Transactions({ refreshTrigger }) {
             }
         } else {
             try {
-                await axios.put(`/api/transactions/${transactionId}`, {
+                await axios.patch(`/api/transactions/${transactionId}`, {
                     category_id: categoryId === '' ? null : parseInt(categoryId)
                 })
                 setLocalRefresh(prev => prev + 1)
@@ -145,6 +159,12 @@ function Transactions({ refreshTrigger }) {
         setSortConfig({ key, direction })
     }
 
+    const toggleCategorySelection = (id) => {
+        setSelectedFilterCategories(prev =>
+            prev.includes(id) ? prev.filter(cid => cid !== id) : [...prev, id]
+        )
+    }
+
     const getCategoryPath = (catId) => {
         const cat = categories.find(c => c.id === catId)
         if (!cat) return ''
@@ -153,18 +173,29 @@ function Transactions({ refreshTrigger }) {
     }
 
     const sortedCategories = [...categories]
-        .map(cat => ({ ...cat, fullPath: getCategoryPath(cat.id) }))
+        .map(cat => {
+            const path = getCategoryPath(cat.id)
+            return {
+                ...cat,
+                fullPath: path,
+                level: (path.match(/\//g) || []).length
+            }
+        })
         .sort((a, b) => a.fullPath.localeCompare(b.fullPath))
 
     const filteredTransactions = transactions
         .filter(t => {
             if (showOnlyUncategorized && (t.category_id || t.is_transfer)) return false
+            if (showOnlyManual && !t.is_manual) return false
 
             // Header filters
             if (filters.id && !t.id.toString().includes(filters.id)) return false
             if (filters.description && !t.description.toLowerCase().includes(filters.description.toLowerCase())) return false
-            if (filters.category) {
-                const catName = (t.is_transfer ? 'Transfer' : (getCategoryPath(t.category_id) || 'Uncategorized')).toLowerCase()
+            if (selectedFilterCategories.length > 0) {
+                if (!t.category_id || !selectedFilterCategories.includes(t.category_id)) return false
+            }
+            if (filters.category && !t.is_transfer) {
+                const catName = (getCategoryPath(t.category_id) || 'Uncategorized').toLowerCase()
                 if (!catName.includes(filters.category.toLowerCase())) return false
             }
             if (filters.amount && !t.amount.toString().includes(filters.amount)) return false
@@ -194,8 +225,13 @@ function Transactions({ refreshTrigger }) {
     return (
         <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+                    <h1 style={{ margin: 0 }}>Transactions</h1>
+                    <Link to="/rules" className="btn-icon" title="Manage Rules" style={{ padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '0.5rem' }}>
+                        <Settings size={20} />
+                    </Link>
+                </div>
                 <div>
-                    <h1>Transactions</h1>
                     <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
                         <span style={{ fontSize: '0.875rem', padding: '0.25rem 0.75rem', borderRadius: '1rem', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
                             Total: <strong>{stats.total}</strong>
@@ -280,6 +316,15 @@ function Transactions({ refreshTrigger }) {
                         />
                         Show only uncategorized
                     </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
+                        <input
+                            type="checkbox"
+                            checked={showOnlyManual}
+                            onChange={(e) => setShowOnlyManual(e.target.checked)}
+                            style={{ width: '16px', height: '16px' }}
+                        />
+                        Manual only
+                    </label>
                     <button
                         onClick={handleReCategorize}
                         className="btn-primary"
@@ -302,8 +347,6 @@ function Transactions({ refreshTrigger }) {
             <div className="glass-card">
                 {loading ? (
                     <p>Loading...</p>
-                ) : filteredTransactions.length === 0 ? (
-                    <p style={{ color: 'var(--text-muted)' }}>No transactions found{showOnlyUncategorized ? ' matching filter' : ''}.</p>
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
@@ -358,14 +401,66 @@ function Transactions({ refreshTrigger }) {
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }} onClick={() => handleSort('category')}>
                                             Category {renderSortIcon('category')}
                                         </div>
-                                        <input
-                                            type="text"
-                                            placeholder="Filter..."
-                                            className="header-filter"
-                                            value={filters.category}
-                                            onChange={(e) => setFilters({ ...filters, category: e.target.value })}
-                                            onClick={(e) => e.stopPropagation()}
-                                        />
+                                        <div style={{ position: 'relative' }}>
+                                            <div
+                                                className="header-filter multiselect-trigger"
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    setDropdownOpen(!dropdownOpen)
+                                                }}
+                                                style={{
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.7rem'
+                                                }}
+                                            >
+                                                <span>
+                                                    {selectedFilterCategories.length === 0
+                                                        ? "All Categories"
+                                                        : `${selectedFilterCategories.length} selected`}
+                                                </span>
+                                                <ChevronDown size={10} style={{ opacity: 0.5 }} />
+                                            </div>
+
+                                            {dropdownOpen && (
+                                                <div className="multiselect-dropdown glass-card shadow-lg" onClick={e => e.stopPropagation()}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem', borderBottom: '1px solid var(--border)', marginBottom: '0.5rem' }}>
+                                                        <button onClick={() => setSelectedFilterCategories([])} className="badge-hint" style={{ border: 'none', background: 'none', cursor: 'pointer' }}>Clear All</button>
+                                                        <button onClick={() => setDropdownOpen(false)} className="badge-hint" style={{ border: 'none', background: 'none', cursor: 'pointer' }}>Done</button>
+                                                    </div>
+                                                    <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                                                        {sortedCategories.map(cat => (
+                                                            <label
+                                                                key={cat.id}
+                                                                style={{
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '0.5rem',
+                                                                    padding: '0.4rem 0.5rem',
+                                                                    paddingLeft: `${0.5 + cat.level * 1.2}rem`,
+                                                                    cursor: 'pointer',
+                                                                    fontSize: '0.8rem',
+                                                                    borderRadius: '4px'
+                                                                }}
+                                                                className="multiselect-item-hover"
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedFilterCategories.includes(cat.id)}
+                                                                    onChange={() => toggleCategorySelection(cat.id)}
+                                                                    style={{ width: '14px', height: '14px' }}
+                                                                />
+                                                                <span style={{ color: selectedFilterCategories.includes(cat.id) ? 'var(--primary-light)' : 'inherit' }}>
+                                                                    {cat.level > 0 ? '↳ ' : ''}{cat.name}
+                                                                </span>
+                                                            </label>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </th>
                                 <th style={{ padding: '1rem' }}>
@@ -388,7 +483,13 @@ function Transactions({ refreshTrigger }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredTransactions.map(t => (
+                            {filteredTransactions.length === 0 ? (
+                                <tr>
+                                    <td colSpan="7" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                        No transactions found{showOnlyUncategorized || showOnlyManual || selectedFilterCategories.length > 0 ? ' matching filter' : ''}.
+                                    </td>
+                                </tr>
+                            ) : filteredTransactions.map(t => (
                                 <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
                                     <td style={{ padding: '1rem' }}>
                                         <input
@@ -406,19 +507,48 @@ function Transactions({ refreshTrigger }) {
                                     <td style={{ padding: '1rem' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                             {t.is_transfer ? (
-                                                <span style={{
-                                                    padding: '0.25rem 0.5rem',
-                                                    background: 'rgba(16, 185, 129, 0.1)',
-                                                    color: 'var(--success)',
-                                                    borderRadius: '4px',
-                                                    fontSize: '0.875rem',
-                                                    border: '1px solid var(--success)',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.3rem'
-                                                }}>
-                                                    Transfer
-                                                </span>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                        <span style={{
+                                                            padding: '0.15rem 0.5rem',
+                                                            background: 'rgba(99, 102, 241, 0.2)',
+                                                            color: 'var(--primary-light)',
+                                                            borderRadius: '12px',
+                                                            fontSize: '0.7rem',
+                                                            border: '1px solid var(--primary)',
+                                                            fontWeight: 600,
+                                                            textTransform: 'uppercase',
+                                                            letterSpacing: '0.02em'
+                                                        }}>
+                                                            Transfer
+                                                        </span>
+                                                        <select
+                                                            value={t.category_id || ''}
+                                                            onChange={(e) => handleCategoryChange(t.id, e.target.value)}
+                                                            className="small-select-stealth"
+                                                            style={{
+                                                                background: 'none',
+                                                                border: 'none',
+                                                                color: 'var(--text-muted)',
+                                                                fontSize: '0.75rem',
+                                                                cursor: 'pointer',
+                                                                outline: 'none',
+                                                                padding: 0
+                                                            }}
+                                                        >
+                                                            <option value="">Change Category...</option>
+                                                            {sortedCategories.map(cat => (
+                                                                <option key={cat.id} value={cat.id}>{cat.fullPath}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                    {t.to_account && (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--success)', fontSize: '0.8rem', fontWeight: 500 }}>
+                                                            <ArrowDown size={12} />
+                                                            {t.to_account.name}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             ) : (
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', width: '100%', maxWidth: '210px' }}>
                                                     <div title={t.is_manual ? "Manually categorized" : "Automatically categorized"} style={{
@@ -552,6 +682,21 @@ function Transactions({ refreshTrigger }) {
                 .header-filter:focus {
                     border-color: var(--primary);
                     background: rgba(255, 255, 255, 0.1);
+                }
+                .multiselect-dropdown {
+                    position: absolute;
+                    top: 100%;
+                    left: 0;
+                    width: 280px;
+                    background: var(--bg-surface);
+                    border: 1px solid var(--border);
+                    z-index: 1000;
+                    margin-top: 0.5rem;
+                    padding: 0.5rem;
+                    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+                }
+                .multiselect-item-hover:hover {
+                    background: rgba(255,255,255,0.05);
                 }
             `}} />
         </div >

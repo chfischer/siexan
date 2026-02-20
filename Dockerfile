@@ -33,7 +33,6 @@ EXPOSE 8000
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV CURRENT_DB=expense_app.db
 
 # Command to run the application
 # We use the virtualenv created by uv

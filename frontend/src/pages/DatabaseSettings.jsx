@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
-import { Database, Plus, Check, RefreshCw, AlertCircle } from 'lucide-react'
+import { Database, Plus, Check, RefreshCw, AlertCircle, FolderSearch } from 'lucide-react'
+import FileExplorer from '../components/FileExplorer'
 
 function DatabaseSettings() {
     const [databases, setDatabases] = useState([])
@@ -9,6 +10,7 @@ function DatabaseSettings() {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
     const [reloading, setReloading] = useState(false)
+    const [showExplorer, setShowExplorer] = useState(false)
 
     const fetchDatabases = async () => {
         try {
@@ -28,7 +30,7 @@ function DatabaseSettings() {
         if (name === currentDb) return
         setLoading(true)
         try {
-            await axios.post(`/api/databases/select?db_name=${name}`)
+            await axios.post(`/api/databases/select?db_name=${encodeURIComponent(name)}`)
             setReloading(true)
             // Wait for backend to reload
             setTimeout(() => {
@@ -107,15 +109,39 @@ function DatabaseSettings() {
                             >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                                     <Database size={18} color={db === currentDb ? 'var(--primary)' : 'var(--text-muted)'} />
-                                    <div>
-                                        <div style={{ fontWeight: 600 }}>{db}</div>
+                                    <div style={{ overflow: 'hidden' }}>
+                                        <div style={{ fontWeight: 600, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                            {db.split('/').pop()}
+                                        </div>
                                         {db === currentDb && <div style={{ fontSize: '0.7rem', color: 'var(--primary)' }}>Currently Active</div>}
+                                        {db.includes('/') && <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', opacity: 0.7, textOverflow: 'ellipsis', overflow: 'hidden' }}>{db}</div>}
                                     </div>
                                 </div>
                                 {db === currentDb && <Check size={18} color="var(--primary)" />}
                             </div>
                         ))}
                     </div>
+
+                    <button
+                        className="btn-secondary"
+                        onClick={() => setShowExplorer(true)}
+                        style={{
+                            width: '100%',
+                            marginTop: '1.5rem',
+                            display: 'flex',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            background: 'rgba(255,255,255,0.05)',
+                            border: '1px solid var(--border)',
+                            padding: '0.75rem',
+                            borderRadius: '0.5rem',
+                            color: 'white',
+                            fontSize: '0.9rem'
+                        }}
+                    >
+                        <FolderSearch size={18} /> Browse Local Filesystem...
+                    </button>
                 </div>
 
                 <div className="glass-card">
@@ -149,6 +175,16 @@ function DatabaseSettings() {
                     </form>
                 </div>
             </div>
+
+            {showExplorer && (
+                <FileExplorer
+                    onClose={() => setShowExplorer(false)}
+                    onSelect={(path) => {
+                        handleSelect(path)
+                        setShowExplorer(false)
+                    }}
+                />
+            )}
 
             <style>{`
                 .db-item:not(.active):hover {

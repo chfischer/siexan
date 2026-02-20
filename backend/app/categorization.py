@@ -24,7 +24,7 @@ def get_categorizer(db: Session = None):
         _categorizer = TransactionCategorizer()
         _categorizer._failed_rules = []
         if db:
-            rules = db.query(models.CategorizationRule).all()
+            rules = db.query(models.CategorizationRule).order_by(models.CategorizationRule.priority.asc()).all()
             for rule in rules:
                 try:
                     target_name = "Uncategorized"
@@ -61,6 +61,11 @@ def categorize_transaction(db: Session, transaction: models.Transaction, force: 
             transaction.category_id = cat_id
             transaction.is_transfer = 0
             transaction.to_account_id = None
+    else:
+        # Revert to Uncategorized if no rules match
+        transaction.category_id = None
+        transaction.is_transfer = 0
+        transaction.to_account_id = None
     
     # Layer 2: Labeling
     labels_matched = categorizer.get_labels(transaction.description)

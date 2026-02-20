@@ -29,6 +29,7 @@ class Account(AccountBase):
 class CategoryBase(BaseModel):
     name: str
     parent_id: Optional[int] = None
+    target_account_id: Optional[int] = None
 
 class CategoryCreate(CategoryBase):
     pass
@@ -83,6 +84,7 @@ class CSVProfile(CSVProfileBase):
 
 class CategorizationRuleBase(BaseModel):
     pattern: str
+    priority: int = 0
     target_category_id: Optional[int] = None
     target_account_id: Optional[int] = None
     target_label_id: Optional[int] = None
@@ -92,11 +94,15 @@ class CategorizationRuleCreate(CategorizationRuleBase):
 
 class CategorizationRuleUpdate(BaseModel):
     pattern: Optional[str] = None
+    priority: Optional[int] = None
     target_category_id: Optional[int] = None
     target_account_id: Optional[int] = None
     target_label_id: Optional[int] = None
 
 class CategorizationRule(CategorizationRuleBase):
     id: int
+    category: Optional[Category] = None
+    target_account: Optional[Account] = None
+    target_label: Optional[Label] = None
     class Config:
         from_attributes = True

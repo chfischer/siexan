@@ -34,7 +34,10 @@ function Dashboard({ refreshTrigger }) {
     const [detailTransactions, setDetailTransactions] = useState([])
     const [loadingDetails, setLoadingDetails] = useState(false)
     const [monthlyData, setMonthlyData] = useState([])
+    const [allCategories, setAllCategories] = useState([])
     const [loadingMonthly, setLoadingMonthly] = useState(true)
+    const [localRefreshTrigger, setLocalRefreshTrigger] = useState(0)
+    const [explodedBars, setExplodedBars] = useState({}) // { '2024-01_inflow': [categories], ... }
     const chartRef = React.useRef(null)
     const barChartRef = React.useRef(null)
 
@@ -59,31 +62,27 @@ function Dashboard({ refreshTrigger }) {
         return { start: format(start), end: format(end) }
     }
 
-    useEffect(() => {
-        const fetchSummary = async () => {
-            setLoading(true)
-            const { start, end } = getDatesForPeriod(period)
+    const fetchSummary = async () => {
+        setLoading(true)
+        const { start, end } = getDatesForPeriod(period)
 
-            // Don't fetch if custom is selected but dates are missing
-            if (period === 'custom' && (!start || !end)) {
-                setLoading(false)
-                return
-            }
-
-            try {
-                const res = await axios.get('/api/analytics/summary', {
-                    params: { start_date: start, end_date: end }
-                })
-                setSummary(res.data)
-            } catch (err) {
-                console.error("Error fetching summary", err)
-            } finally {
-                setLoading(false)
-            }
+        // Don't fetch if custom is selected but dates are missing
+        if (period === 'custom' && (!start || !end)) {
+            setLoading(false)
+            return
         }
-        fetchSummary()
-        setSelectedCategory(null)
-    }, [refreshTrigger, period, customStart, customEnd])
+
+        try {
+            const res = await axios.get('/api/analytics/summary', {
+                params: { start_date: start, end_date: end }
+            })
+            setSummary(res.data)
+        } catch (err) {
+            console.error("Error fetching summary", err)
+        } finally {
+            setLoading(false)
+        }
+    }
 
     const fetchMonthly = async () => {
         setLoadingMonthly(true)
@@ -103,7 +102,7 @@ function Dashboard({ refreshTrigger }) {
             await axios.delete(`/api/transactions/${id}`)
             // After deletion, refresh the summary and details if a category is selected
             // This will trigger the useEffects that fetch data
-            setRefreshTrigger(prev => prev + 1)
+            setLocalRefreshTrigger(prev => prev + 1)
             // If a category is selected, re-fetch its details
             if (selectedCategory) {
                 setSelectedCategory(null) // Clear to force re-fetch
@@ -116,22 +115,45 @@ function Dashboard({ refreshTrigger }) {
     }
 
     useEffect(() => {
+        const fetchCategories = async () => {
+            try {
+                const res = await axios.get('/api/categories/')
+                setAllCategories(res.data)
+            } catch (err) {
+                console.error("Error fetching categories", err)
+            }
+        }
+        fetchCategories()
+    }, [])
+
+    useEffect(() => {
+        fetchSummary()
         fetchMonthly()
-    }, [refreshTrigger])
+        setSelectedCategory(null) // Reset selected category when period changes
+    }, [period, customStart, customEnd, refreshTrigger, localRefreshTrigger])
 
     useEffect(() => {
         const fetchDetails = async () => {
-            if (!selectedCategory) return
             setLoadingDetails(true)
             const { start, end } = getDatesForPeriod(period)
             try {
-                const params = { start_date: start, end_date: end, limit: 100 }
-                if (selectedCategory.isMonthlyTotal) {
-                    // Fetch all for this period
-                } else if (selectedCategory.category === 'Uncategorized') {
-                    params.is_uncategorized = true
-                } else if (!selectedCategory.isMonthlyTotal) {
-                    params.category_id = selectedCategory.category_id
+                const params = { start_date: start, end_date: end, limit: 5000 }
+                if (selectedCategory) {
+                    if (selectedCategory.isMonthlyTotal) {
+                        if (selectedCategory.category_id) {
+                            params.category_id = selectedCategory.category_id
+                        } else if (selectedCategory.isUncategorized) {
+                            params.is_uncategorized = true
+                        } else if (selectedCategory.type === 'inflow') {
+                            params.min_amount = 0.01
+                        } else if (selectedCategory.type === 'outflow') {
+                            params.max_amount = -0.01
+                        }
+                    } else if (selectedCategory.category === 'Uncategorized') {
+                        params.is_uncategorized = true
+                    } else {
+                        params.category_id = selectedCategory.category_id
+                    }
                 }
                 const res = await axios.get('/api/transactions/', { params })
                 setDetailTransactions(res.data)
@@ -142,43 +164,215 @@ function Dashboard({ refreshTrigger }) {
             }
         }
         fetchDetails()
-    }, [selectedCategory, period, refreshTrigger]) // Added refreshTrigger here to re-fetch details after delete
+    }, [selectedCategory, period, refreshTrigger, localRefreshTrigger])
+
+    const handleUpdateCategory = async (txId, categoryId) => {
+        try {
+            await axios.patch(`/api/transactions/${txId}`, { category_id: categoryId })
+            setLocalRefreshTrigger(prev => prev + 1)
+        } catch (err) {
+            console.error("Error updating transaction category", err)
+        }
+    }
+
+    // Helper to organize categories hierarchically
+    const getHierarchicalCategories = () => {
+        const parents = allCategories.filter(c => !c.parent_id)
+        const children = allCategories.filter(c => c.parent_id)
+
+        const result = []
+        const process = (cats, level = 0) => {
+            cats.sort((a, b) => a.name.localeCompare(b.name))
+            cats.forEach(cat => {
+                result.push({ ...cat, level })
+                const subCats = children.filter(c => c.parent_id === cat.id)
+                if (subCats.length > 0) {
+                    process(subCats, level + 1)
+                }
+            })
+        }
+        process(parents)
+        return result
+    }
+
+    const hierarchicalCategories = getHierarchicalCategories()
 
     const onChartClick = (event) => {
         const element = getElementAtEvent(chartRef.current, event)
         if (element.length > 0) {
             const index = element[0].index
-            setSelectedCategory(summary[index])
-            // Smooth scroll to details
+            const pieCategories = [...(summary.spending_categories || [])].sort((a, b) => b.total - a.total)
+            setSelectedCategory(pieCategories[index])
             setTimeout(() => {
                 document.getElementById('details-section')?.scrollIntoView({ behavior: 'smooth' })
             }, 100)
         }
     }
 
+    const handleSelectBar = (event, elements) => {
+        if (elements.length > 0) {
+            const chart = barChartRef.current
+            if (!chart) return
+
+            const element = elements[0]
+            const index = element.index
+            const datasetIndex = element.datasetIndex
+            const dataset = chart.data.datasets[datasetIndex]
+            const item = monthlyData[index]
+            const [year, month] = item.month.split('-')
+
+            // Set custom range for that month
+            const start = `${year}-${month}-01`
+            const lastDay = new Date(year, month, 0).getDate()
+            const end = `${year}-${month}-${lastDay}`
+
+            setCustomStart(start)
+            setCustomEnd(end)
+            setPeriod('custom')
+
+            const type = dataset.stack // 'inflow' or 'outflow'
+            const key = `${item.month}_${type}`
+            const exploded = explodedBars[key]
+
+            let categoryLabel = `${type === 'inflow' ? 'Inflow' : 'Outflow'} for ${item.month}`
+            let categoryId = null
+            let isUncategorized = false
+
+            // If it's a category dataset (label exists and is not just "Inflow"/"Outflow")
+            if (exploded && dataset.label !== 'Inflow' && dataset.label !== 'Outflow') {
+                // Extract "Food" from "Food (In)"
+                const catName = dataset.label.replace(' (In)', '').replace(' (Out)', '')
+                categoryLabel = `${catName} in ${item.month}`
+                const catObj = exploded.find(c => c.category === catName)
+                if (catObj) {
+                    categoryId = catObj.category_id
+                    if (!categoryId) isUncategorized = true
+                }
+            }
+
+            setSelectedCategory({
+                category: categoryLabel,
+                isMonthlyTotal: true,
+                type: type,
+                category_id: categoryId,
+                isUncategorized: isUncategorized
+            })
+        }
+    }
+
+    const handleRightClick = async (event, elements) => {
+        event.preventDefault()
+        if (elements && elements.length > 0) {
+            const chart = barChartRef.current
+            if (!chart) return
+
+            const element = elements[0]
+            const index = element.index
+            const datasetIndex = element.datasetIndex
+            const dataset = chart.data.datasets[datasetIndex]
+            const item = monthlyData[index]
+            const type = dataset.stack // 'inflow' or 'outflow'
+            const key = `${item.month}_${type}`
+
+            if (explodedBars[key]) {
+                // Toggle off
+                const newExploded = { ...explodedBars }
+                delete newExploded[key]
+                setExplodedBars(newExploded)
+                return
+            }
+
+            const [year, month] = item.month.split('-')
+            const start = `${year}-${month}-01`
+            const lastDay = new Date(year, month, 0).getDate()
+            const end = `${year}-${month}-${lastDay}`
+
+            try {
+                const res = await axios.get('/api/analytics/summary', {
+                    params: { start_date: start, end_date: end }
+                })
+                const categories = type === 'inflow' ? res.data.income_categories : res.data.spending_categories
+                setExplodedBars(prev => ({ ...prev, [key]: categories }))
+            } catch (err) {
+                console.error("Error exploding bar", err)
+            }
+        }
+    }
+
+    // Generate bar data with explosions
+    const categoryColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
+
+    // Find all unique categories across all exploded bars to create datasets
+    const allExplodedCategories = new Set()
+    Object.values(explodedBars).forEach(cats => {
+        cats.forEach(c => allExplodedCategories.add(c.category))
+    })
+    const sortedCategories = Array.from(allExplodedCategories).sort()
+
+    const datasets = []
+
+    // 1. Base Inflow (only for non-exploded)
+    datasets.push({
+        label: 'Inflow',
+        data: monthlyData.map(d => explodedBars[`${d.month}_inflow`] ? 0 : d.inflow),
+        backgroundColor: '#10b981',
+        borderRadius: 4,
+        stack: 'inflow'
+    })
+
+    // 2. Base Outflow (only for non-exploded)
+    datasets.push({
+        label: 'Outflow',
+        data: monthlyData.map(d => explodedBars[`${d.month}_outflow`] ? 0 : d.outflow),
+        backgroundColor: '#ef4444',
+        borderRadius: 4,
+        stack: 'outflow'
+    })
+
+    // 3. Category datasets for Inflow
+    sortedCategories.forEach((catName, idx) => {
+        const color = categoryColors[idx % categoryColors.length]
+        datasets.push({
+            label: `${catName} (In)`,
+            data: monthlyData.map(d => {
+                const exploded = explodedBars[`${d.month}_inflow`]
+                if (!exploded) return 0
+                const cat = exploded.find(c => c.category === catName)
+                return cat ? cat.total : 0
+            }),
+            backgroundColor: color,
+            stack: 'inflow',
+            hidden: false // We could hide them from legend if too many
+        })
+    })
+
+    // 4. Category datasets for Outflow
+    sortedCategories.forEach((catName, idx) => {
+        const color = categoryColors[idx % categoryColors.length]
+        datasets.push({
+            label: `${catName} (Out)`,
+            data: monthlyData.map(d => {
+                const exploded = explodedBars[`${d.month}_outflow`]
+                if (!exploded) return 0
+                const cat = exploded.find(c => c.category === catName)
+                return cat ? cat.total : 0
+            }),
+            backgroundColor: color,
+            stack: 'outflow',
+            hidden: false
+        })
+    })
+
     const barData = {
         labels: monthlyData.map(d => d.month),
-        datasets: [
-            {
-                label: 'Inflow',
-                data: monthlyData.map(d => d.inflow),
-                backgroundColor: '#10b981',
-                borderRadius: 4,
-            },
-            {
-                label: 'Outflow',
-                data: monthlyData.map(d => d.outflow),
-                backgroundColor: '#ef4444',
-                borderRadius: 4,
-            }
-        ]
+        datasets: datasets
     }
 
     const barOptions = {
         maintainAspectRatio: false,
         plugins: {
             legend: {
-                display: true,
+                display: false,
                 position: 'top',
                 labels: { color: 'white', font: { size: 12 } }
             },
@@ -186,56 +380,54 @@ function Dashboard({ refreshTrigger }) {
                 backgroundColor: 'rgba(0, 0, 0, 0.8)',
                 padding: 12,
                 titleFont: { size: 14, weight: 'bold' },
-                bodyFont: { size: 13 }
+                bodyFont: { size: 13 },
+                callbacks: {
+                    label: (context) => {
+                        let label = context.dataset.label || ''
+                        if (label) label += ': '
+                        if (context.parsed.y !== null) {
+                            label += new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(context.parsed.y)
+                        }
+                        return label
+                    }
+                }
             }
         },
         scales: {
             x: {
+                stacked: true,
                 grid: { display: false },
                 ticks: { color: 'rgba(255, 255, 255, 0.7)' }
             },
             y: {
+                stacked: true,
                 grid: { color: 'rgba(255, 255, 255, 0.1)' },
                 ticks: { color: 'rgba(255, 255, 255, 0.7)' }
             }
         },
-        onClick: (e, elements) => {
-            if (elements.length > 0) {
-                const index = elements[0].index
-                const item = monthlyData[index]
-                const [year, month] = item.month.split('-')
-
-                // Set custom range for that month
-                const start = `${year}-${month}-01`
-                const lastDay = new Date(year, month, 0).getDate()
-                const end = `${year}-${month}-${lastDay}`
-
-                setCustomStart(start)
-                setCustomEnd(end)
-                setPeriod('custom')
-                setSelectedCategory({ category: `Transactions for ${item.month}`, isMonthlyTotal: true })
-
-                setTimeout(() => {
-                    document.getElementById('details-section')?.scrollIntoView({ behavior: 'smooth' })
-                }, 100)
-            }
+        onClick: handleSelectBar,
+        // Enable context menu to handle right click
+        onHover: (event, chartElement) => {
+            event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
         }
     }
 
+    const pieCategories = [...(summary.spending_categories || [])].sort((a, b) => b.total - a.total)
+
     const pieData = {
-        labels: (summary.categories || []).map(s => s.category),
+        labels: pieCategories.map(s => s.category),
         datasets: [
             {
-                data: (summary.categories || []).map(s => s.total),
+                data: pieCategories.map(s => s.total),
                 backgroundColor: [
-                    '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899',
+                    '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#3b82f6', '#14b8a6'
                 ],
                 borderWidth: 0,
             },
         ],
     }
 
-    const categories = summary.categories || []
+    const categories = summary.spending_categories || []
     const totalIncome = summary.total_income || 0
     const totalSpending = summary.total_spending || 0
 
@@ -287,11 +479,27 @@ function Dashboard({ refreshTrigger }) {
             {!loadingMonthly && monthlyData.length > 0 && (
                 <div className="glass-card" style={{ marginBottom: '2rem', height: '350px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                        <h2 style={{ margin: 0 }}>Cash Flow Trend</h2>
-                        <span className="text-muted small">Click bars to filter by month</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                            <h2 style={{ margin: 0 }}>Cash Flow Trend</h2>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <span className="badge-hint">Left-click to filter</span>
+                                <span className="badge-hint">Right-click to split</span>
+                            </div>
+                        </div>
+                        <span className="text-muted small">Showing last 12 months</span>
                     </div>
                     <div style={{ height: '260px' }}>
-                        <Bar data={barData} options={barOptions} />
+                        <Bar
+                            data={barData}
+                            options={barOptions}
+                            onContextMenu={(e) => {
+                                const chart = barChartRef.current
+                                if (!chart) return
+                                const elements = chart.getElementsAtEventForMode(e.nativeEvent, 'nearest', { intersect: true }, true)
+                                handleRightClick(e.nativeEvent, elements)
+                            }}
+                            ref={barChartRef}
+                        />
                     </div>
                 </div>
             )}
@@ -306,7 +514,7 @@ function Dashboard({ refreshTrigger }) {
                     <p style={{ marginTop: '1rem' }}>Adjust your filter or upload more transactions.</p>
                 </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '2rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
                     <div className="glass-card">
                         <h2 style={{ marginBottom: '2rem' }}>Spending by Category</h2>
                         <div style={{ height: '300px', display: 'flex', justifyContent: 'center' }}>
@@ -319,128 +527,144 @@ function Dashboard({ refreshTrigger }) {
                                     plugins: {
                                         legend: { position: 'right', labels: { color: 'white', padding: 20 } }
                                     },
-                                    onClick: (e, elements) => {
-                                        if (elements.length > 0) {
-                                            const index = elements[0].index
-                                            setSelectedCategory(categories[index])
-                                        }
+                                    onHover: (event, chartElement) => {
+                                        event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
                                     }
                                 }}
                             />
                         </div>
                     </div>
-
-                    <div className="glass-card">
-                        <h2 style={{ marginBottom: '2rem' }}>Quick Stats</h2>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                <div style={{ background: 'rgba(16, 185, 129, 0.05)', padding: '1.25rem', borderRadius: '1rem', border: '1px solid rgba(16, 185, 129, 0.1)' }}>
-                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase' }}>Total Income</p>
-                                    <h3 style={{ fontSize: '1.75rem', color: 'var(--success)', marginTop: '0.25rem' }}>${totalIncome.toFixed(2)}</h3>
-                                </div>
-                                <div style={{ background: 'rgba(239, 68, 68, 0.05)', padding: '1.25rem', borderRadius: '1rem', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
-                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase' }}>Total Expenses</p>
-                                    <h3 style={{ fontSize: '1.75rem', color: 'var(--danger)', marginTop: '0.25rem' }}>${totalSpending.toFixed(2)}</h3>
-                                </div>
-                            </div>
-
-                            <div style={{ background: 'rgba(99, 102, 241, 0.05)', padding: '1.25rem', borderRadius: '1rem', border: '1px solid rgba(99, 102, 241, 0.1)', textAlign: 'center' }}>
-                                <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase' }}>Net Cash Flow</p>
-                                <h3 style={{ fontSize: '2rem', color: (totalIncome - totalSpending) >= 0 ? 'var(--success)' : 'var(--danger)', marginTop: '0.25rem' }}>
-                                    ${(totalIncome - totalSpending).toFixed(2)}
-                                </h3>
-                            </div>
-
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '200px', overflowY: 'auto', paddingRight: '0.5rem' }}>
-                                {categories.map(s => (
-                                    <div key={s.category} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--primary)' }}></div>
-                                            <span>{s.category}</span>
-                                        </div>
-                                        <div style={{ textAlign: 'right' }}>
-                                            <div style={{ fontWeight: 600 }}>${s.total.toFixed(2)}</div>
-                                            <div className="x-small text-muted">{((s.total / totalSpending) * 100).toFixed(1)}%</div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
                 </div>
             )}
 
-            {selectedCategory && (
-                <div id="details-section" style={{ marginTop: '2.5rem' }} className="glass-card animate-slide-up">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)' }}>
-                                <ArrowDown size={20} />
-                            </div>
-                            <div>
-                                <h2 style={{ margin: 0 }}>{selectedCategory.category} {selectedCategory.isMonthlyTotal ? '' : 'Details'}</h2>
-                                <p className="text-muted small">Showing transactions for selected period</p>
-                            </div>
+            <div id="details-section" style={{ marginTop: '2.5rem' }} className="glass-card animate-slide-up">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)' }}>
+                            <ArrowDown size={20} />
                         </div>
+                        <div>
+                            <h2 style={{ margin: 0 }}>
+                                {selectedCategory ? selectedCategory.category : 'All Transactions'}
+                                {selectedCategory && !selectedCategory.isMonthlyTotal ? ' Details' : ''}
+                            </h2>
+                            <p className="text-muted small">
+                                {selectedCategory ? 'Showing transactions for selected filter' : 'Showing all transactions for selected period'}
+                            </p>
+                        </div>
+                    </div>
+                    {selectedCategory && (
                         <button onClick={() => setSelectedCategory(null)} className="btn-icon" style={{ padding: '0.5rem' }}>
                             <X size={20} />
                         </button>
-                    </div>
-
-                    {loadingDetails ? (
-                        <div style={{ height: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <div className="spinner"></div>
-                        </div>
-                    ) : (
-                        <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
-                                        <th style={{ padding: '1rem' }}>Date</th>
-                                        <th style={{ padding: '1rem' }}>Description</th>
-                                        <th style={{ padding: '1rem', textAlign: 'right' }}>Amount</th>
-                                        <th style={{ padding: '1rem', textAlign: 'right' }}>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {detailTransactions.map(t => (
-                                        <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                                            <td style={{ padding: '1rem' }}>{t.date}</td>
-                                            <td style={{ padding: '1rem' }}>{t.description}</td>
-                                            <td style={{
-                                                padding: '1rem',
-                                                textAlign: 'right',
-                                                color: t.amount < 0 ? 'var(--danger)' : 'var(--success)',
-                                                fontWeight: 600
-                                            }}>
-                                                ${t.amount.toFixed(2)}
-                                            </td>
-                                            <td style={{ textAlign: 'right', padding: '1rem' }}>
-                                                <button
-                                                    onClick={() => handleDelete(t.id)}
-                                                    className="btn-icon"
-                                                    style={{ color: 'var(--text-muted)', opacity: 0.5 }}
-                                                    onMouseEnter={(e) => e.currentTarget.style.color = 'var(--danger)'}
-                                                    onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {detailTransactions.length === 0 && (
-                                        <tr>
-                                            <td colSpan="4" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                                                No specific transactions found.
-                                            </td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
                     )}
                 </div>
-            )}
+
+                {loadingDetails ? (
+                    <div style={{ height: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <div className="spinner"></div>
+                    </div>
+                ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
+                                    <th style={{ padding: '1rem' }}>Date</th>
+                                    <th style={{ padding: '1rem' }}>Category</th>
+                                    <th style={{ padding: '1rem' }}>Description</th>
+                                    <th style={{ padding: '1rem', textAlign: 'right' }}>Amount</th>
+                                    <th style={{ padding: '1rem', textAlign: 'right' }}>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {detailTransactions.map(t => (
+                                    <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                        <td style={{ padding: '1rem' }}>{t.date}</td>
+                                        <td style={{ padding: '1rem' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                                {t.is_transfer && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                        <span style={{
+                                                            padding: '0.1rem 0.4rem',
+                                                            background: 'rgba(99, 102, 241, 0.2)',
+                                                            color: 'var(--primary-light)',
+                                                            borderRadius: '10px',
+                                                            fontSize: '0.65rem',
+                                                            border: '1px solid var(--primary)',
+                                                            fontWeight: 700,
+                                                            textTransform: 'uppercase'
+                                                        }}>
+                                                            Transfer
+                                                        </span>
+                                                        {t.to_account && (
+                                                            <span style={{ color: 'var(--success)', fontSize: '0.75rem', fontWeight: 600 }}>
+                                                                ↳ {t.to_account.name}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                <select
+                                                    value={t.category_id || ''}
+                                                    onChange={(e) => handleUpdateCategory(t.id, e.target.value ? parseInt(e.target.value) : null)}
+                                                    style={{
+                                                        background: t.is_transfer ? 'transparent' : 'rgba(99, 102, 241, 0.1)',
+                                                        border: t.is_transfer ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                                                        padding: '0.25rem 0.5rem',
+                                                        borderRadius: '0.25rem',
+                                                        color: t.is_transfer ? 'var(--text-muted)' : 'var(--primary)',
+                                                        fontWeight: 500,
+                                                        fontSize: '0.875rem',
+                                                        outline: 'none',
+                                                        cursor: 'pointer',
+                                                        width: '100%',
+                                                        maxWidth: '180px'
+                                                    }}
+                                                >
+                                                    <option value="">Uncategorized</option>
+                                                    {hierarchicalCategories.map(cat => (
+                                                        <option key={cat.id} value={cat.id}>
+                                                            {'\u00A0'.repeat(cat.level * 3)}
+                                                            {cat.level > 0 ? '↳ ' : ''}
+                                                            {cat.name}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: '1rem' }}>{t.description}</td>
+                                        <td style={{
+                                            padding: '1rem',
+                                            textAlign: 'right',
+                                            color: t.amount < 0 ? 'var(--danger)' : 'var(--success)',
+                                            fontWeight: 600
+                                        }}>
+                                            ${t.amount.toFixed(2)}
+                                        </td>
+                                        <td style={{ textAlign: 'right', padding: '1rem' }}>
+                                            <button
+                                                onClick={() => handleDelete(t.id)}
+                                                className="btn-icon"
+                                                style={{ color: 'var(--text-muted)', opacity: 0.5 }}
+                                                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--danger)'}
+                                                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {detailTransactions.length === 0 && (
+                                    <tr>
+                                        <td colSpan="4" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                            No specific transactions found.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
 
             <style dangerouslySetInnerHTML={{
                 __html: `
@@ -474,6 +698,15 @@ function Dashboard({ refreshTrigger }) {
                 .small { font-size: 0.875rem; }
                 .x-small { font-size: 0.75rem; }
                 .text-muted { color: var(--text-muted); }
+                .badge-hint {
+                    font-size: 0.65rem;
+                    background: rgba(255, 255, 255, 0.05);
+                    padding: 0.2rem 0.5rem;
+                    border-radius: 1rem;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    color: var(--text-muted);
+                    font-weight: 500;
+                }
             `}} />
         </div>
     )
