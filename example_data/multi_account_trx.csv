@@ -1,0 +1,7 @@
+Date,Amount,Description,SourceAccount
+2026-02-18,-15.50,Grocery Store,Checking
+2026-02-18,500.00,Payroll Deposit,Checking
+2026-02-19,-50.00,Gas Station,Checking
+2026-02-19,100.00,Interest Payment,Savings
+2026-02-20,200.00,Transfer Received,Savings
+

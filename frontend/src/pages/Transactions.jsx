@@ -210,6 +210,9 @@ function Transactions({ refreshTrigger }) {
             if (sortConfig.key === 'category') {
                 valA = a.is_transfer ? 'Transfer' : (getCategoryPath(a.category_id) || 'Uncategorized')
                 valB = b.is_transfer ? 'Transfer' : (getCategoryPath(b.category_id) || 'Uncategorized')
+            } else if (sortConfig.key === 'account') {
+                valA = accounts.find(acc => acc.id === a.account_id)?.name || ''
+                valB = accounts.find(acc => acc.id === b.account_id)?.name || ''
             }
 
             if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1
@@ -381,6 +384,11 @@ function Transactions({ refreshTrigger }) {
                                         Date {renderSortIcon('date')}
                                     </div>
                                 </th>
+                                <th style={{ padding: '1rem', width: '120px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }} onClick={() => handleSort('account')}>
+                                        Account {renderSortIcon('account')}
+                                    </div>
+                                </th>
                                 <th style={{ padding: '1rem' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }} onClick={() => handleSort('description')}>
@@ -485,7 +493,7 @@ function Transactions({ refreshTrigger }) {
                         <tbody>
                             {filteredTransactions.length === 0 ? (
                                 <tr>
-                                    <td colSpan="7" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                    <td colSpan="8" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                                         No transactions found{showOnlyUncategorized || showOnlyManual || selectedFilterCategories.length > 0 ? ' matching filter' : ''}.
                                     </td>
                                 </tr>
@@ -503,6 +511,9 @@ function Transactions({ refreshTrigger }) {
                                     </td>
                                     <td style={{ padding: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>#{t.id}</td>
                                     <td style={{ padding: '1rem' }}>{t.date}</td>
+                                    <td style={{ padding: '1rem', fontSize: '0.85rem' }}>
+                                        {accounts.find(a => a.id === t.account_id)?.name || 'Unknown'}
+                                    </td>
                                     <td style={{ padding: '1rem' }}>{t.description}</td>
                                     <td style={{ padding: '1rem' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

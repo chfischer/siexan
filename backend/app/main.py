@@ -229,6 +229,19 @@ def delete_profile(profile_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Profile deleted"}
 
+@app.put("/profiles/{profile_id}", response_model=schemas.CSVProfile)
+def update_profile(profile_id: int, profile: schemas.CSVProfileCreate, db: Session = Depends(get_db)):
+    db_profile = db.query(models.CSVProfile).filter(models.CSVProfile.id == profile_id).first()
+    if not db_profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+        
+    for key, value in profile.dict().items():
+        setattr(db_profile, key, value)
+        
+    db.commit()
+    db.refresh(db_profile)
+    return db_profile
+
 # --- Account Endpoints ---
 
 @app.post("/accounts/", response_model=schemas.Account)
@@ -741,22 +754,46 @@ async def upload_csv(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error parsing CSV: {str(e)}")
         
-    # 3. Save Transactions with Deduplication
+    # 3. Handle Account Mapping
+    account_mapping = profile.column_mapping.get('account_mapping', {})
+    
+    # 4. Save Transactions with Deduplication
     from .categorization import categorize_transaction
     from sqlalchemy.exc import IntegrityError
     
     imported_count = 0
     skipped_count = 0
+    skipped_duplicates = 0
+    unmapped_accounts = set()
+    is_multi_account = bool(profile.column_mapping.get('account'))
     
     for t in parsed_transactions:
-        tx_hash = calculate_hash(t['date'], t['amount'], t['description'], account_id)
+        # Determine actual account for this row
+        final_account_id = account_id
+        if is_multi_account:
+            acc_str = t.get('account_string')
+            mapped_id = account_mapping.get(acc_str) if acc_str else None
+            # Only exact mappings allowed when using multi-account explicit mappings
+            if not mapped_id:
+                unmapped_accounts.add(acc_str if acc_str else "Empty Account")
+                skipped_count += 1
+                continue
+            final_account_id = int(mapped_id)
+        else:
+            # Single-account with optional override
+            if t.get('account_string'):
+                mapped_id = account_mapping.get(t['account_string'])
+                if mapped_id:
+                    final_account_id = int(mapped_id)
+        
+        tx_hash = calculate_hash(t['date'], t['amount'], t['description'], final_account_id)
         
         db_t = models.Transaction(
             date=t['date'],
             amount=t['amount'],
             description=t['description'],
             raw_data=t['raw_data'],
-            account_id=account_id,
+            account_id=final_account_id,
             transaction_hash=tx_hash
         )
         
@@ -764,11 +801,11 @@ async def upload_csv(
             # We use a sub-transaction (savepoint) to catch IntegrityError without breaking the main transaction
             with db.begin_nested():
                 db.add(db_t)
-                # Run categorization engine after adding to session to avoid SAWarning
                 categorize_transaction(db, db_t)
             imported_count += 1
         except IntegrityError:
             # Duplicate found via transaction_hash unique constraint
+            skipped_duplicates += 1
             skipped_count += 1
             continue
         except Exception as e:
@@ -777,10 +814,21 @@ async def upload_csv(
             continue
             
     db.commit()
+    
+    if unmapped_accounts:
+        unmapped_str = ", ".join([f"'{a}'" for a in unmapped_accounts])
+        msg = f"Import complete: {imported_count} imported. Skipped {skipped_count} transactions.\n({len(unmapped_accounts)} unmapped accounts: {unmapped_str})"
+    else:
+        num_skipped = skipped_count
+        msg = f"Import complete: {imported_count} imported. Skipped {num_skipped} duplicates/errors."
+        if num_skipped == 0:
+            msg = f"Import complete: {imported_count} imported successfully."
+            
     return {
-        "message": f"Import complete: {imported_count} imported, {skipped_count} skipped.",
+        "message": msg,
         "imported": imported_count,
-        "skipped": skipped_count
+        "skipped": skipped_count,
+        "unmapped_accounts": list(unmapped_accounts)
     }
 
 @app.delete("/transactions/{transaction_id}")

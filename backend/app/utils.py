@@ -71,6 +71,7 @@ def parse_csv_with_profile(content: bytes, profile: Dict[str, Any]) -> List[Dict
     credit_col = mapping.get('credit')
     debit_col = mapping.get('debit')
     amount_type_col = mapping.get('amount_type')
+    account_col = mapping.get('account')
     invert_amount = mapping.get('invert_amount', False)
     
     # Description can be a single string or a list of strings
@@ -149,10 +150,16 @@ def parse_csv_with_profile(content: bytes, profile: Dict[str, Any]) -> List[Dict
                     desc_parts.append(str(row[col]).strip())
             description = " | ".join(desc_parts)
             
+            # 4. Parse Account String (if mapped)
+            account_string = None
+            if account_col and account_col in row and not pd.isna(row[account_col]):
+                account_string = str(row[account_col]).strip()
+            
             transactions.append({
                 "date": dt,
                 "amount": amount,
                 "description": description,
+                "account_string": account_string,
                 "raw_data": row.to_dict()
             })
         except Exception as e:

@@ -45,10 +45,15 @@ function ImportModal({ onClose, onComplete }) {
             })
             setStatus('success')
             setMessage(res.data.message)
-            setTimeout(() => {
+            if (res.data.unmapped_accounts && res.data.unmapped_accounts.length > 0) {
+                // Refresh data but don't auto-close so user can read the warning
                 onComplete()
-                onClose()
-            }, 2000)
+            } else {
+                setTimeout(() => {
+                    onComplete()
+                    onClose()
+                }, 2000)
+            }
         } catch (err) {
             setStatus('error')
             setMessage(err.response?.data?.detail || "Upload failed")
@@ -69,22 +74,16 @@ function ImportModal({ onClose, onComplete }) {
 
                 {status === 'success' ? (
                     <div style={{ textAlign: 'center', padding: '2rem' }}>
-                        <CheckCircle size={48} color="var(--success)" style={{ marginBottom: '1rem' }} />
-                        <p>{message}</p>
+                        <CheckCircle size={48} color={message.includes('unmapped') ? "var(--warning, #f59e0b)" : "var(--success)"} style={{ marginBottom: '1rem' }} />
+                        <p style={{ whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{message}</p>
+                        {message.includes('unmapped') && (
+                            <button className="btn-primary" onClick={onClose} style={{ marginTop: '1.5rem', width: '100%' }}>
+                                Close
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                        <div>
-                            <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem' }}>Select Account</label>
-                            <select
-                                value={selectedAccount}
-                                onChange={e => setSelectedAccount(e.target.value)}
-                                style={{ width: '100%', padding: '0.75rem', borderRadius: '0.5rem', background: 'var(--bg-deep)', border: '1px solid var(--border)', color: 'white' }}
-                            >
-                                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                            </select>
-                        </div>
-
                         <div>
                             <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem' }}>Select Mapper</label>
                             <select
@@ -95,6 +94,47 @@ function ImportModal({ onClose, onComplete }) {
                                 {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                         </div>
+
+                        {(() => {
+                            const activeProfile = profiles.find(p => p.id.toString() === selectedProfile?.toString())
+                            const hasAccountMapping = activeProfile?.column_mapping?.account
+                            const accountMappings = activeProfile?.column_mapping?.account_mapping || {}
+
+                            if (hasAccountMapping) {
+                                return (
+                                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: '0.5rem', border: '1px solid var(--border)' }}>
+                                        <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', color: 'var(--primary)' }}>Multi-Account Mapper</label>
+                                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                                            Transactions will be mapped based on the <strong>{activeProfile.column_mapping.account}</strong> column.
+                                        </p>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem' }}>
+                                            {Object.entries(accountMappings).map(([key, val]) => {
+                                                const accName = accounts.find(a => a.id.toString() === val?.toString())?.name || 'Unmapped (Fallback)'
+                                                return (
+                                                    <div key={key} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.25rem' }}>
+                                                        <span>"{key}"</span>
+                                                        <span style={{ color: 'var(--text-muted)' }}>→ {accName}</span>
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    </div>
+                                )
+                            }
+
+                            return (
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem' }}>Select Account (Default)</label>
+                                    <select
+                                        value={selectedAccount}
+                                        onChange={e => setSelectedAccount(e.target.value)}
+                                        style={{ width: '100%', padding: '0.75rem', borderRadius: '0.5rem', background: 'var(--bg-deep)', border: '1px solid var(--border)', color: 'white' }}
+                                    >
+                                        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                    </select>
+                                </div>
+                            )
+                        })()}
 
                         <div style={{
                             border: '2px dashed var(--border)',
