@@ -184,6 +184,17 @@ def run_seed(db: Session = Depends(get_db)):
     seed.seed_db(db)
     return {"message": "Database seeded successfully"}
 
+@app.post("/databases/populate")
+def populate_example(db: Session = Depends(get_db)):
+    import generate_example
+    try:
+        count = generate_example.populate_example_data(db)
+        return {"message": f"Successfully populated {count} example transactions."}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to populate example data: {str(e)}")
+
 @app.get("/")
 async def read_root():
     # If we are in consolidated mode (Docker or local build), serve the frontend

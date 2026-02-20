@@ -11,6 +11,7 @@ function DatabaseSettings() {
     const [error, setError] = useState('')
     const [reloading, setReloading] = useState(false)
     const [showExplorer, setShowExplorer] = useState(false)
+    const [populating, setPopulating] = useState(false)
 
     const fetchDatabases = async () => {
         try {
@@ -55,6 +56,43 @@ function DatabaseSettings() {
         } catch (err) {
             setError(err.response?.data?.detail || 'Failed to create database')
             setLoading(false)
+        }
+    }
+
+    const handlePopulate = async (e) => {
+        e.preventDefault()
+        setPopulating(true)
+        setError('')
+        try {
+            // First check if there are any existing transactions
+            const statsRes = await axios.get('/api/transactions/stats')
+            const totalTx = statsRes.data.total
+            
+            if (totalTx > 0) {
+                const confirmMsg = `WARNING: This database already contains ${totalTx} transactions.\n\nAdding example data will mix dummy data with your real data.\n\nAre you absolutely sure you want to proceed?`
+                if (!window.confirm(confirmMsg)) {
+                    setPopulating(false)
+                    return
+                }
+            } else {
+                const confirmMsg = `This will add around 150 example transactions, categories, and accounts to the current database.\n\nProceed?`
+                if (!window.confirm(confirmMsg)) {
+                    setPopulating(false)
+                    return
+                }
+            }
+            
+            const res = await axios.post('/api/databases/populate')
+            alert(res.data.message)
+            
+            setReloading(true)
+            setTimeout(() => {
+                window.location.reload()
+            }, 1000)
+
+        } catch (err) {
+            setError(err.response?.data?.detail || 'Failed to populate example data')
+            setPopulating(false)
         }
     }
 
@@ -173,6 +211,25 @@ function DatabaseSettings() {
                             Create & Switch
                         </button>
                     </form>
+                    
+                    <hr style={{ margin: '2rem 0', borderColor: 'rgba(255,255,255,0.1)' }} />
+                    
+                    <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <Database size={20} /> Example Data
+                    </h2>
+                    <p className="text-muted" style={{ marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+                        Populate the currently active database with ~150 example transactions, accounts, rules, and categories to see how the application works.
+                    </p>
+                    <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={handlePopulate}
+                        disabled={populating}
+                        style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                    >
+                        {populating ? <RefreshCw className="spin" size={18} /> : <Check size={18} />}
+                        Populate Current DB with Example Data
+                    </button>
                 </div>
             </div>
 
