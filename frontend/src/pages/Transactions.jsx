@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
-import { PlusCircle, Search, Tag, Info, AlertCircle, Calendar, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Zap, User, Settings } from 'lucide-react'
+import { PlusCircle, Search, Tag, Info, AlertCircle, Calendar, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Zap, User, Settings, MessageSquare } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import QuickCategorizeModal from '../components/QuickCategorizeModal'
 import Notification from '../components/Notification'
@@ -15,16 +15,18 @@ function Transactions({ refreshTrigger }) {
     const [stats, setStats] = useState({ total: 0, uncategorized: 0 })
     const [notification, setNotification] = useState(null)
     const [localRefresh, setLocalRefresh] = useState(0)
-    const [showOnlyUncategorized, setShowOnlyUncategorized] = useState(false)
+    const [showOnlyUncategorized, setShowOnlyUncategorized] = useState(true)
     const [showOnlyManual, setShowOnlyManual] = useState(false)
     const [selectedFilterCategories, setSelectedFilterCategories] = useState([])
     const [dropdownOpen, setDropdownOpen] = useState(false)
-    const [period, setPeriod] = useState('last_month')
+    const [period, setPeriod] = useState('all')
     const [customStart, setCustomStart] = useState('')
     const [customEnd, setCustomEnd] = useState('')
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' })
     const [filters, setFilters] = useState({ id: '', description: '', category: '', amount: '' })
     const [selectedIds, setSelectedIds] = useState([])
+    const [editingCommentId, setEditingCommentId] = useState(null)
+    const [commentDraft, setCommentDraft] = useState('')
 
     const getDatesForPeriod = (selectedPeriod) => {
         const now = new Date()
@@ -148,6 +150,19 @@ function Transactions({ refreshTrigger }) {
                 console.error("Failed to update category", err)
                 setNotification({ type: 'error', message: "Failed to update category" })
             }
+        }
+    }
+
+    const handleSaveComment = async (id) => {
+        const original = transactions.find(t => t.id === id)?.comment || ''
+        const trimmed = commentDraft.trim()
+        setEditingCommentId(null)
+        if (trimmed === (original || '').trim()) return
+        try {
+            await axios.patch(`/api/transactions/${id}`, { comment: trimmed || null })
+            setLocalRefresh(prev => prev + 1)
+        } catch {
+            setNotification({ type: 'error', message: 'Failed to save comment' })
         }
     }
 
@@ -514,7 +529,50 @@ function Transactions({ refreshTrigger }) {
                                     <td style={{ padding: '1rem', fontSize: '0.85rem' }}>
                                         {accounts.find(a => a.id === t.account_id)?.name || 'Unknown'}
                                     </td>
-                                    <td style={{ padding: '1rem' }}>{t.description}</td>
+                                    <td style={{ padding: '1rem' }} className="tx-desc-cell">
+                                        <div>{t.description}</div>
+                                        {editingCommentId === t.id ? (
+                                            <input
+                                                autoFocus
+                                                value={commentDraft}
+                                                onChange={e => setCommentDraft(e.target.value)}
+                                                onBlur={() => handleSaveComment(t.id)}
+                                                onKeyDown={e => {
+                                                    if (e.key === 'Enter') handleSaveComment(t.id)
+                                                    if (e.key === 'Escape') setEditingCommentId(null)
+                                                }}
+                                                placeholder="Add a comment..."
+                                                style={{
+                                                    marginTop: '0.3rem',
+                                                    background: 'rgba(255,255,255,0.06)',
+                                                    border: '1px solid var(--primary)',
+                                                    borderRadius: '4px',
+                                                    color: 'var(--text-main)',
+                                                    fontSize: '0.78rem',
+                                                    padding: '0.2rem 0.4rem',
+                                                    outline: 'none',
+                                                    width: '100%',
+                                                }}
+                                            />
+                                        ) : (
+                                            <div
+                                                className="tx-comment-row"
+                                                onClick={() => { setEditingCommentId(t.id); setCommentDraft(t.comment || '') }}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: t.comment ? '0.3rem' : '0', cursor: 'pointer' }}
+                                            >
+                                                {t.comment && (
+                                                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                                        {t.comment}
+                                                    </span>
+                                                )}
+                                                <MessageSquare
+                                                    size={11}
+                                                    className="tx-comment-icon"
+                                                    style={{ color: 'var(--text-muted)', opacity: t.comment ? 0.5 : 0, flexShrink: 0 }}
+                                                />
+                                            </div>
+                                        )}
+                                    </td>
                                     <td style={{ padding: '1rem' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                             {t.is_transfer ? (
@@ -708,6 +766,12 @@ function Transactions({ refreshTrigger }) {
                 }
                 .multiselect-item-hover:hover {
                     background: rgba(255,255,255,0.05);
+                }
+                .tx-desc-cell:hover .tx-comment-icon {
+                    opacity: 0.5 !important;
+                }
+                .tx-comment-row:hover .tx-comment-icon {
+                    opacity: 1 !important;
                 }
             `}} />
         </div >

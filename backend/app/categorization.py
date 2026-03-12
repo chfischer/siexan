@@ -36,7 +36,7 @@ def get_categorizer(db: Session = None):
                     elif rule.target_category_id:
                         target_name = f"__ID_CAT__:{rule.target_category_id}"
                     
-                    _categorizer.add_regex_pattern(rule.pattern, target_name)
+                    _categorizer.add_regex_pattern(rule.pattern, target_name, rule.amount_condition)
                 except Exception as e:
                     _categorizer._failed_rules.append({"pattern": rule.pattern, "error": str(e)})
     return _categorizer
@@ -46,7 +46,7 @@ def categorize_transaction(db: Session, transaction: models.Transaction, force: 
         return False
     
     categorizer = get_categorizer(db)
-    result = categorizer.categorize(transaction.description)
+    result = categorizer.categorize(transaction.description, transaction.amount)
     
     cat_str = result["category"]
     
@@ -58,9 +58,14 @@ def categorize_transaction(db: Session, transaction: models.Transaction, force: 
             transaction.category_id = None
         elif cat_str.startswith("__ID_CAT__:"):
             cat_id = int(cat_str.replace("__ID_CAT__:", ""))
+            cat = db.query(models.Category).filter(models.Category.id == cat_id).first()
             transaction.category_id = cat_id
-            transaction.is_transfer = 0
-            transaction.to_account_id = None
+            if cat and cat.target_account_id:
+                transaction.is_transfer = 1
+                transaction.to_account_id = cat.target_account_id
+            else:
+                transaction.is_transfer = 0
+                transaction.to_account_id = None
     else:
         # Revert to Uncategorized if no rules match
         transaction.category_id = None
@@ -68,7 +73,7 @@ def categorize_transaction(db: Session, transaction: models.Transaction, force: 
         transaction.to_account_id = None
     
     # Layer 2: Labeling
-    labels_matched = categorizer.get_labels(transaction.description)
+    labels_matched = categorizer.get_labels(transaction.description, transaction.amount)
     if labels_matched:
         for lbl_id_str in labels_matched:
             lbl_id = int(lbl_id_str)

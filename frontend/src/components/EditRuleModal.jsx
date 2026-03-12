@@ -4,6 +4,7 @@ import { X, Tag, AlertCircle, Hash } from 'lucide-react'
 
 function EditRuleModal({ rule, categories, accounts, labels, onClose, onRuleUpdated }) {
     const [pattern, setPattern] = useState(rule.pattern)
+    const [amountCondition, setAmountCondition] = useState(rule.amount_condition || '')
     const [mode, setMode] = useState(
         rule.target_account_id ? 'transfer' :
             rule.target_label_id ? 'label' : 'category'
@@ -21,6 +22,7 @@ function EditRuleModal({ rule, categories, accounts, labels, onClose, onRuleUpda
         try {
             const payload = {
                 pattern: pattern,
+                amount_condition: amountCondition.trim() || null,
                 target_category_id: mode === 'category' ? parseInt(selectedCategoryId) : null,
                 target_account_id: mode === 'transfer' ? parseInt(selectedAccountId) : null,
                 target_label_id: mode === 'label' ? parseInt(selectedLabelId) : null
@@ -91,6 +93,22 @@ function EditRuleModal({ rule, categories, accounts, labels, onClose, onRuleUpda
                             placeholder="e.g. UBER.*"
                             autoFocus
                         />
+                    </div>
+
+                    <div className="form-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                            Amount Condition <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.78rem' }}>(optional)</span>
+                        </label>
+                        <input
+                            type="text"
+                            className="form-control"
+                            value={amountCondition}
+                            onChange={(e) => setAmountCondition(e.target.value)}
+                            placeholder="e.g. >100, <=500, =50"
+                        />
+                        <p style={{ margin: '0.35rem 0 0', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                            Operators: =, !=, &gt;, &gt;=, &lt;, &lt;=. Leave empty to match any amount.
+                        </p>
                     </div>
 
                     <div className="form-group">

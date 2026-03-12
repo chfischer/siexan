@@ -16,6 +16,7 @@ function CategorizationRules({ refreshTrigger }) {
     const [newLabelColor, setNewLabelColor] = useState('#6366f1')
     const [addingRuleTo, setAddingRuleTo] = useState(null) // ID of category, label or 'transfer'
     const [newRulePattern, setNewRulePattern] = useState('')
+    const [newCategoryIsIncome, setNewCategoryIsIncome] = useState(false)
     const [error, setError] = useState(null)
     const [searchQuery, setSearchQuery] = useState('')
     const [editingRule, setEditingRule] = useState(null)
@@ -47,11 +48,23 @@ function CategorizationRules({ refreshTrigger }) {
         e.preventDefault()
         if (!newCategoryName.trim()) return
         try {
-            await axios.post('/api/categories/', { name: newCategoryName })
+            await axios.post('/api/categories/', { name: newCategoryName, is_income: newCategoryIsIncome })
             setNewCategoryName('')
+            setNewCategoryIsIncome(false)
             fetchData()
         } catch (err) {
             setError('Failed to create category')
+        }
+    }
+
+    const handleToggleIncome = async (category) => {
+        try {
+            await axios.patch(`/api/categories/${category.id}`, { 
+                is_income: !category.is_income 
+            })
+            fetchData()
+        } catch (err) {
+            setError('Failed to update category')
         }
     }
 
@@ -363,14 +376,41 @@ function CategorizationRules({ refreshTrigger }) {
                     {filteredCategories.map(category => {
                         const categoryRules = rules.filter(r => r.target_category_id === category.id)
                         return (
-                            <div key={category.id} className="glass-card" style={{ padding: '0' }}>
+                            <div key={category.id} className="glass-card" style={{ padding: '0', border: category.is_income ? '1px solid var(--success)' : '1px solid var(--border)' }}>
                                 <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                        <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)' }}>
+                                        <div style={{ 
+                                            width: '40px', 
+                                            height: '40px', 
+                                            borderRadius: '10px', 
+                                            background: category.is_income ? 'rgba(16, 185, 129, 0.1)' : 'rgba(99, 102, 241, 0.1)', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center', 
+                                            color: category.is_income ? 'var(--success)' : 'var(--primary)' 
+                                        }}>
                                             <Tag size={20} />
                                         </div>
                                         <div>
-                                            <h3 style={{ margin: 0 }}>{category.fullPath}</h3>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <h3 style={{ margin: 0 }}>{category.fullPath}</h3>
+                                                <button 
+                                                    onClick={() => handleToggleIncome(category)}
+                                                    style={{
+                                                        fontSize: '0.65rem',
+                                                        fontWeight: 700,
+                                                        padding: '0.1rem 0.4rem',
+                                                        borderRadius: '1rem',
+                                                        background: category.is_income ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                                                        color: category.is_income ? 'var(--success)' : 'var(--text-muted)',
+                                                        border: `1px solid ${category.is_income ? 'var(--success)' : 'var(--border)'}`,
+                                                        cursor: 'pointer',
+                                                        textTransform: 'uppercase'
+                                                    }}
+                                                >
+                                                    {category.is_income ? 'Income' : 'Expense'}
+                                                </button>
+                                            </div>
                                             <span className="text-muted small">{categoryRules.length} matching rules</span>
                                         </div>
                                     </div>
@@ -457,6 +497,15 @@ function CategorizationRules({ refreshTrigger }) {
                                     onChange={(e) => setNewCategoryName(e.target.value)}
                                     required
                                 />
+                            </div>
+                            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer', marginBottom: '1rem' }} onClick={() => setNewCategoryIsIncome(!newCategoryIsIncome)}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={newCategoryIsIncome} 
+                                    onChange={() => {}} 
+                                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                                />
+                                <span className="small" style={{ fontWeight: 600 }}>Mark as Income Category</span>
                             </div>
                             <button type="submit" className="btn-primary w-full" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                                 <Plus size={18} /> Create Category

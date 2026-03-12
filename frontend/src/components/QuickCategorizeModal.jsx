@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import axios from 'axios'
 import { X, Tag, PlusCircle, AlertCircle } from 'lucide-react'
 
@@ -69,6 +69,28 @@ function QuickCategorizeModal({ transaction, onClose, onRuleCreated }) {
         }
     };
 
+    const categoryPaths = useMemo(() => {
+        const getPath = (id) => {
+            const c = categories.find(x => x.id === id)
+            if (!c) return ''
+            if (!c.parent_id) return c.name
+            return `${getPath(c.parent_id)}/${c.name}`
+        }
+        return categories.map(cat => getPath(cat.id)).sort()
+    }, [categories])
+
+    const categoryCompletion = useMemo(() => {
+        if (!newCategoryName || !showAddNewCategory) return null
+        return categoryPaths.find(p => p.toLowerCase().startsWith(newCategoryName.toLowerCase()) && p.toLowerCase() !== newCategoryName.toLowerCase())
+    }, [categoryPaths, newCategoryName, showAddNewCategory])
+
+    const handleCategoryKeyDown = (e) => {
+        if (e.key === 'Tab' && categoryCompletion) {
+            e.preventDefault()
+            setNewCategoryName(categoryCompletion)
+        }
+    }
+
     const handleSave = async () => {
         if (!pattern.trim()) return
 
@@ -122,7 +144,7 @@ function QuickCategorizeModal({ transaction, onClose, onRuleCreated }) {
             zIndex: 1000,
             backdropFilter: 'blur(4px)'
         }}>
-            <div className="glass-card" style={{ width: '450px', position: 'relative' }}>
+            <div className="glass-card" style={{ width: '600px', position: 'relative' }}>
                 <button
                     onClick={onClose}
                     style={{ position: 'absolute', right: '1.25rem', top: '1.25rem', background: 'none', border: 'none', color: 'var(--text-muted)' }}
@@ -190,14 +212,17 @@ function QuickCategorizeModal({ transaction, onClose, onRuleCreated }) {
                             }
                         })()}
                     </div>
-                    <input
-                        type="text"
+                    <textarea
                         className="form-control"
                         value={pattern}
                         onChange={(e) => setPattern(e.target.value)}
                         placeholder="e.g. COOP or UBER.*"
                         autoFocus
+                        rows={4}
                         style={{
+                            fontFamily: 'monospace',
+                            resize: 'vertical',
+                            minHeight: '100px',
                             borderColor: (() => {
                                 try {
                                     if (!pattern.trim()) return 'var(--border)'
@@ -291,14 +316,32 @@ function QuickCategorizeModal({ transaction, onClose, onRuleCreated }) {
                         </div>
 
                         {showAddNewCategory ? (
-                            <input
-                                type="text"
-                                className="form-control"
-                                placeholder="e.g. Salary/Anna"
-                                value={newCategoryName}
-                                onChange={(e) => setNewCategoryName(e.target.value)}
-                                autoFocus
-                            />
+                            <div style={{ position: 'relative' }}>
+                                <input
+                                    type="text"
+                                    className="form-control"
+                                    placeholder="e.g. Salary/Anna"
+                                    value={newCategoryName}
+                                    onChange={(e) => setNewCategoryName(e.target.value)}
+                                    onKeyDown={handleCategoryKeyDown}
+                                    autoFocus
+                                />
+                                {categoryCompletion && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        bottom: '-1.5rem',
+                                        left: '0.25rem',
+                                        fontSize: '0.75rem',
+                                        color: 'var(--primary)',
+                                        background: 'rgba(99, 102, 241, 0.1)',
+                                        padding: '0.1rem 0.4rem',
+                                        borderRadius: '0.25rem',
+                                        pointerEvents: 'none'
+                                    }}>
+                                        Tab: <strong>{categoryCompletion}</strong>
+                                    </div>
+                                )}
+                            </div>
                         ) : (
                             <select
                                 className="form-control"

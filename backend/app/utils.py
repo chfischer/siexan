@@ -148,7 +148,7 @@ def parse_csv_with_profile(content: bytes, profile: Dict[str, Any]) -> List[Dict
             for col in desc_cols:
                 if col in row and not pd.isna(row[col]):
                     desc_parts.append(str(row[col]).strip())
-            description = " | ".join(desc_parts)
+            description = ", ".join(desc_parts)
             
             # 4. Parse Account String (if mapped)
             account_string = None

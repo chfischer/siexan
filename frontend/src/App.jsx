@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
-import { LayoutDashboard, Receipt, Settings, Upload, Wallet, Tag, Database } from 'lucide-react'
+import { LayoutDashboard, Receipt, Settings, Upload, Wallet, Database, List } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import Transactions from './pages/Transactions'
 import MapperManagement from './pages/MapperManagement'
 import AccountManagement from './pages/AccountManagement'
-import Rules from './pages/Rules'
+import CategoryManagement from './pages/CategoryManagement'
 import DatabaseSettings from './pages/DatabaseSettings'
 import ImportModal from './components/ImportModal'
 
@@ -115,7 +115,7 @@ function App() {
                             <Wallet size={18} /> Accounts
                         </NavLink>
                         <NavLink
-                            to="/rules"
+                            to="/categories"
                             className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
                             style={({ isActive }) => ({
                                 background: 'none',
@@ -128,7 +128,7 @@ function App() {
                                 textDecoration: 'none'
                             })}
                         >
-                            <Tag size={18} /> Rules
+                            <List size={18} /> Categories
                         </NavLink>
                         <NavLink
                             to="/mapper"
@@ -200,8 +200,9 @@ function App() {
                         <Route path="/dashboard" element={<Dashboard refreshTrigger={refreshTrigger} />} />
                         <Route path="/transactions" element={<Transactions refreshTrigger={refreshTrigger} />} />
                         <Route path="/accounts" element={<AccountManagement refreshTrigger={refreshTrigger} />} />
+                        <Route path="/categories" element={<CategoryManagement refreshTrigger={refreshTrigger} />} />
+                        <Route path="/rules" element={<Navigate to="/categories" replace />} />
                         <Route path="/mapper" element={<MapperManagement />} />
-                        <Route path="/rules" element={<Rules />} />
                         <Route path="/db" element={<DatabaseSettings />} />
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>

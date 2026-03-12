@@ -6,6 +6,7 @@ function AccountManagement({ refreshTrigger }) {
     const [accounts, setAccounts] = useState([])
     const [newName, setNewName] = useState('')
     const [newType, setNewType] = useState('Checking')
+    const [newCurrency, setNewCurrency] = useState('CHF')
 
     useEffect(() => {
         fetchAccounts()
@@ -23,7 +24,7 @@ function AccountManagement({ refreshTrigger }) {
     const handleCreate = async () => {
         if (!newName) return
         try {
-            await axios.post('/api/accounts/', { name: newName, type: newType })
+            await axios.post('/api/accounts/', { name: newName, type: newType, currency: newCurrency })
             setNewName('')
             fetchAccounts()
         } catch (err) {
@@ -66,6 +67,14 @@ function AccountManagement({ refreshTrigger }) {
                             <option value="Credit Card">Credit Card</option>
                             <option value="Investment">Investment</option>
                         </select>
+                        <input
+                            type="text"
+                            placeholder="Currency (e.g. CHF, EUR, USD)"
+                            value={newCurrency}
+                            onChange={e => setNewCurrency(e.target.value.toUpperCase())}
+                            maxLength={10}
+                            style={{ padding: '0.75rem', borderRadius: '0.5rem', background: 'var(--bg-deep)', border: '1px solid var(--border)', color: 'white' }}
+                        />
                         <button className="btn-primary" onClick={handleCreate} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                             <Plus size={18} /> Create Account
                         </button>
@@ -91,7 +100,7 @@ function AccountManagement({ refreshTrigger }) {
                                         <Wallet size={20} color="var(--primary)" />
                                         <div>
                                             <div style={{ fontWeight: 600 }}>{acc.name}</div>
-                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{acc.type}</div>
+                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{acc.type} · {acc.currency || 'CHF'}</div>
                                         </div>
                                     </div>
                                     <button style={{ background: 'none', border: 'none', color: 'var(--danger)' }}>

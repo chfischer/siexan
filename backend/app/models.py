@@ -17,6 +17,8 @@ class Category(Base):
     name = Column(String, index=True)
     parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     target_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    is_income = Column(Integer, default=0) # 0 = Expense, 1 = Income
+    priority = Column(Integer, default=0) # Lower = Higher priority (shows first)
 
     __table_args__ = (
         UniqueConstraint('name', 'parent_id', name='uix_category_name_parent'),
@@ -39,6 +41,7 @@ class Transaction(Base):
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     transaction_hash = Column(String, unique=True, index=True, nullable=True)
     is_manual = Column(Integer, default=0) # 0 = Auto/Uncategorized, 1 = User set
+    comment = Column(String, nullable=True)
 
     category = relationship("Category", back_populates="transactions")
     account = relationship("Account", foreign_keys=[account_id], back_populates="transactions")
@@ -51,6 +54,7 @@ class Account(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True)
     type = Column(String) # e.g., "Checking", "Credit Card"
+    currency = Column(String, default="CHF")
 
     transactions = relationship("Transaction", back_populates="account", foreign_keys="[Transaction.account_id]")
 
@@ -78,6 +82,7 @@ class CategorizationRule(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     pattern = Column(String, index=True) # regex pattern to match description
+    amount_condition = Column(String, nullable=True) # e.g. ">100", "<=500", "=50"
     priority = Column(Integer, default=0) # Lower = Higher priority
     target_category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     target_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)

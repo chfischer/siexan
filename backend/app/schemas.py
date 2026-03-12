@@ -17,6 +17,7 @@ class Label(LabelBase):
 class AccountBase(BaseModel):
     name: str
     type: str
+    currency: str = "CHF"
 
 class AccountCreate(AccountBase):
     pass
@@ -30,6 +31,8 @@ class CategoryBase(BaseModel):
     name: str
     parent_id: Optional[int] = None
     target_account_id: Optional[int] = None
+    is_income: bool = False
+    priority: int = 0
 
 class CategoryCreate(CategoryBase):
     pass
@@ -49,6 +52,7 @@ class TransactionBase(BaseModel):
     to_account_id: Optional[int] = None
     raw_data: Optional[Dict[str, Any]] = None
     is_manual: bool = False
+    comment: Optional[str] = None
 
 class TransactionCreate(TransactionBase):
     pass
@@ -66,6 +70,7 @@ class TransactionUpdate(BaseModel):
     is_transfer: Optional[bool] = None
     to_account_id: Optional[int] = None
     is_manual: Optional[bool] = None
+    comment: Optional[str] = None
 
 class CSVProfileBase(BaseModel):
     name: str
@@ -84,6 +89,7 @@ class CSVProfile(CSVProfileBase):
 
 class CategorizationRuleBase(BaseModel):
     pattern: str
+    amount_condition: Optional[str] = None
     priority: int = 0
     target_category_id: Optional[int] = None
     target_account_id: Optional[int] = None
@@ -94,6 +100,7 @@ class CategorizationRuleCreate(CategorizationRuleBase):
 
 class CategorizationRuleUpdate(BaseModel):
     pattern: Optional[str] = None
+    amount_condition: Optional[str] = None
     priority: Optional[int] = None
     target_category_id: Optional[int] = None
     target_account_id: Optional[int] = None

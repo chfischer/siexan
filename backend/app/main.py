@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Body, APIRouter, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Body, APIRouter, Request, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -11,48 +11,11 @@ from . import models, schemas, categorization, seed
 from .database import SessionLocal, engine, get_db, Base
 from .config import get_config, save_config, get_db_path, DATA_DIR
 
+from .database import init_db_schema
+
 # Ensure tables exist on startup only if a DB is selected
 if get_db_path():
-    Base.metadata.create_all(bind=engine)
-
-    # Migration: Add is_manual column to transactions if it doesn't exist
-    try:
-        from sqlalchemy import text
-        with engine.connect() as conn:
-            # Check if column exists
-            result = conn.execute(text("PRAGMA table_info(transactions)"))
-            columns = [row[1] for row in result]
-            if "is_manual" not in columns:
-                print("DEBUG: Migration - Adding is_manual column to transactions table")
-                conn.execute(text("ALTER TABLE transactions ADD COLUMN is_manual INTEGER DEFAULT 0"))
-            
-            result_cat = conn.execute(text("PRAGMA table_info(categories)"))
-            columns_cat = [row[1] for row in result_cat]
-            if "target_account_id" not in columns_cat:
-                print("DEBUG: Migration - Adding target_account_id to categories table")
-                conn.execute(text("ALTER TABLE categories ADD COLUMN target_account_id INTEGER REFERENCES accounts(id)"))
-            
-            # Migration: Update categories unique constraint
-            try:
-                # 1. Drop old global unique index if it exists
-                conn.execute(text("DROP INDEX IF EXISTS ix_categories_name"))
-                # 2. Create new per-parent unique index
-                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_category_name_parent ON categories (name, parent_id)"))
-                print("DEBUG: Migration - Updated categories unique constraint to (name, parent_id)")
-                conn.commit()
-            except Exception as ex:
-                print(f"DEBUG: Category uniqueness migration note: {ex}")
-                conn.rollback()
-
-            result_rule = conn.execute(text("PRAGMA table_info(categorization_rules)"))
-            columns_rule = [row[1] for row in result_rule]
-            if "priority" not in columns_rule:
-                print("DEBUG: Migration - Adding priority to categorization_rules table")
-                conn.execute(text("ALTER TABLE categorization_rules ADD COLUMN priority INTEGER DEFAULT 0"))
-            
-            conn.commit()
-    except Exception as e:
-        print(f"DEBUG: Migration failed or column exists: {e}")
+    init_db_schema(engine)
 
 def sync_transfer_categories(db: Session):
     """Ensures a 'Transfer' parent category exists and has sub-categories for each account."""
@@ -266,35 +229,85 @@ def create_category(category: schemas.CategoryCreate, db: Session = Depends(get_
     # Support hierarchical names via slash notation (e.g., "Salary/Anna")
     parts = [p.strip() for p in category.name.split('/')]
     
-    current_parent_id = None
+    current_parent_id = category.parent_id
     last_cat = None
     
-    for part in parts:
-        # Check if category exists at this level
-        existing = db.query(models.Category).filter(
-            models.Category.name == part,
-            models.Category.parent_id == current_parent_id
-        ).first()
-        
-        if existing:
-            last_cat = existing
-        else:
-            # Create new category
-            new_cat = models.Category(name=part, parent_id=current_parent_id)
-            db.add(new_cat)
-            db.commit()
-            db.refresh(new_cat)
-            last_cat = new_cat
-            
-        current_parent_id = last_cat.id
-        
-    return last_cat
+    # If a full path was provided in the name, we process it differently
+    if len(parts) > 1:
+        current_parent_id = None
+        for part in parts:
+            existing = db.query(models.Category).filter(
+                models.Category.name == part,
+                models.Category.parent_id == current_parent_id
+            ).first()
+            if existing:
+                last_cat = existing
+            else:
+                new_cat = models.Category(name=part, parent_id=current_parent_id, is_income=1 if category.is_income else 0)
+                db.add(new_cat)
+                db.commit()
+                db.refresh(new_cat)
+                last_cat = new_cat
+            current_parent_id = last_cat.id
+        return last_cat
+    else:
+        # Simple creation
+        db_cat = models.Category(**category.dict())
+        db.add(db_cat)
+        db.commit()
+        db.refresh(db_cat)
+        return db_cat
 
 @app.get("/categories/", response_model=List[schemas.Category])
 def read_categories(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     sync_transfer_categories(db)
-    categories = db.query(models.Category).all()
+    categories = db.query(models.Category).order_by(models.Category.priority.asc(), models.Category.name.asc()).all()
     return categories
+
+@app.put("/categories/{category_id}", response_model=schemas.Category)
+def update_category(category_id: int, category: schemas.CategoryCreate, db: Session = Depends(get_db)):
+    db_cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not db_cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+        
+    for key, value in category.dict().items():
+        setattr(db_cat, key, value)
+        
+    db.commit()
+    db.refresh(db_cat)
+    return db_cat
+
+@app.patch("/categories/{category_id}", response_model=schemas.Category)
+def patch_category(category_id: int, category_update: dict = Body(...), db: Session = Depends(get_db)):
+    db_cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not db_cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+        
+    for key, value in category_update.items():
+        if hasattr(db_cat, key):
+            setattr(db_cat, key, value)
+        
+    db.commit()
+    db.refresh(db_cat)
+    return db_cat
+
+@app.delete("/categories/{category_id}")
+def delete_category(category_id: int, db: Session = Depends(get_db)):
+    db_cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not db_cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    # Check for children
+    children = db.query(models.Category).filter(models.Category.parent_id == category_id).all()
+    for child in children:
+        child.parent_id = db_cat.parent_id # Move children up
+        
+    # Check for transactions
+    db.query(models.Transaction).filter(models.Transaction.category_id == category_id).update({models.Transaction.category_id: None})
+    
+    db.delete(db_cat)
+    db.commit()
+    return {"message": "Category deleted"}
 
 # --- Categorization Rules ---
 
@@ -424,6 +437,7 @@ def export_rules(db: Session = Depends(get_db)):
     for r in rules:
         rule_dict = {
             "pattern": r.pattern,
+            "amount_condition": r.amount_condition,
             "target_category_name": r.category.name if r.category else None,
             "target_account_name": r.target_account.name if r.target_account else None,
             "target_label_name": r.target_label.name if r.target_label else None
@@ -493,6 +507,7 @@ def import_rules(data: dict, db: Session = Depends(get_db)):
             
         db_rule = models.CategorizationRule(
             pattern=pattern,
+            amount_condition=rule_data.get('amount_condition'),
             target_category_id=cat_id,
             target_account_id=acc_id,
             target_label_id=lbl_id
@@ -627,12 +642,14 @@ def read_transactions(
     skip: int = 0, 
     limit: int = 100, 
     category_id: Optional[int] = None,
+    category_ids: Optional[List[int]] = Query(None),
     is_uncategorized: Optional[bool] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     account_id: Optional[int] = None,
     min_amount: Optional[float] = None,
     max_amount: Optional[float] = None,
+    is_transfer: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     from sqlalchemy.orm import joinedload
@@ -644,10 +661,14 @@ def read_transactions(
     
     if account_id is not None:
         query = query.filter(models.Transaction.account_id == account_id)
-    if category_id is not None:
+    if category_ids:
+        query = query.filter(models.Transaction.category_id.in_(category_ids))
+    elif category_id is not None:
         query = query.filter(models.Transaction.category_id == category_id)
     if is_uncategorized:
         query = query.filter(models.Transaction.category_id == None, models.Transaction.is_transfer == 0)
+    if is_transfer is not None:
+        query = query.filter(models.Transaction.is_transfer == is_transfer)
     if start_date:
         query = query.filter(models.Transaction.date >= start_date)
     if end_date:
@@ -851,23 +872,28 @@ def bulk_delete_transactions(transaction_ids: List[int] = Body(...), db: Session
 
 @app.get("/analytics/monthly")
 def get_monthly_analytics(db: Session = Depends(get_db)):
-    from sqlalchemy import func
+    from sqlalchemy import func, or_
     
-    # 1. Monthly income
+    # 1. Monthly income (amount > 0 OR category is marked as income)
     income_query = db.query(
         func.strftime('%Y-%m', models.Transaction.date).label("month"),
         func.sum(models.Transaction.amount).label("inflow")
+    ).select_from(models.Transaction).join(
+        models.Category, isouter=True
     ).filter(
         models.Transaction.is_transfer == 0,
-        models.Transaction.amount > 0
+        or_(models.Category.is_income == 1, models.Transaction.amount > 0)
     ).group_by("month").all()
     
-    # 2. Monthly spending
+    # 2. Monthly spending (category is NOT marked as income AND amount < 0)
     spending_query = db.query(
         func.strftime('%Y-%m', models.Transaction.date).label("month"),
         func.sum(models.Transaction.amount).label("outflow")
+    ).select_from(models.Transaction).join(
+        models.Category, isouter=True
     ).filter(
         models.Transaction.is_transfer == 0,
+        or_(models.Category.id == None, models.Category.is_income == 0),
         models.Transaction.amount < 0
     ).group_by("month").all()
     
@@ -894,25 +920,34 @@ def get_summary(
     end_date: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    from sqlalchemy import func
+    from sqlalchemy import func, or_
     
-    # 1. Spending breakdown (Negative amounts)
+    # 1. Spending breakdown (Category is NOT marked as income AND amount < 0)
     spending_query = db.query(
         models.Category.name,
         models.Category.id,
+        models.Category.parent_id,
         func.sum(models.Transaction.amount).label("total")
     ).select_from(models.Transaction).join(
         models.Category, isouter=True
-    ).filter(models.Transaction.is_transfer == 0, models.Transaction.amount < 0)
+    ).filter(
+        models.Transaction.is_transfer == 0,
+        or_(models.Category.id == None, models.Category.is_income == 0),
+        models.Transaction.amount < 0
+    )
     
-    # 2. Income breakdown (Positive amounts)
+    # 2. Income breakdown (Category IS income OR amount is positive)
     income_categories_query = db.query(
         models.Category.name,
         models.Category.id,
+        models.Category.parent_id,
         func.sum(models.Transaction.amount).label("total")
     ).select_from(models.Transaction).join(
         models.Category, isouter=True
-    ).filter(models.Transaction.is_transfer == 0, models.Transaction.amount > 0)
+    ).filter(
+        models.Transaction.is_transfer == 0,
+        or_(models.Category.is_income == 1, models.Transaction.amount > 0)
+    )
 
     if start_date:
         spending_query = spending_query.filter(models.Transaction.date >= start_date)
@@ -921,24 +956,92 @@ def get_summary(
         spending_query = spending_query.filter(models.Transaction.date <= end_date)
         income_categories_query = income_categories_query.filter(models.Transaction.date <= end_date)
         
-    spending_summary = spending_query.group_by(models.Category.name, models.Category.id).all()
-    income_categories_summary = income_categories_query.group_by(models.Category.name, models.Category.id).all()
+    spending_summary = spending_query.group_by(models.Category.name, models.Category.id, models.Category.parent_id).all()
+    income_categories_summary = income_categories_query.group_by(models.Category.name, models.Category.id, models.Category.parent_id).all()
     
-    total_income = sum(s[2] for s in income_categories_summary if s[2]) or 0.0
-    total_spending = sum(s[2] for s in spending_summary if s[2]) or 0.0
+    total_income = sum(s[3] for s in income_categories_summary if s[3]) or 0.0
+    total_spending = sum(s[3] for s in spending_summary if s[3]) or 0.0
     
     return {
         "spending_categories": [
-            {"category": s[0] or "Uncategorized", "category_id": s[1], "total": abs(s[2]) if s[2] else 0.0} 
+            {"category": s[0] or "Uncategorized", "category_id": s[1], "parent_id": s[2], "total": abs(s[3]) if s[3] else 0.0} 
             for s in spending_summary
         ],
         "income_categories": [
-            {"category": s[0] or "Uncategorized", "category_id": s[1], "total": s[2] if s[2] else 0.0} 
+            {"category": s[0] or "Uncategorized", "category_id": s[1], "parent_id": s[2], "total": s[3] if s[3] else 0.0} 
             for s in income_categories_summary
         ],
         "total_income": total_income,
         "total_spending": abs(total_spending)
     }
+
+@app.post("/migrations/fix-transfers")
+def fix_transfers(db: Session = Depends(get_db)):
+    # 0. Migration: Create is_income and priority column if missing
+    from sqlalchemy import text
+    try:
+        db.execute(text("ALTER TABLE categories ADD COLUMN is_income INTEGER DEFAULT 0"))
+        db.commit()
+    except Exception:
+        db.rollback()
+    
+    try:
+        db.execute(text("ALTER TABLE categories ADD COLUMN priority INTEGER DEFAULT 0"))
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    # 1. Categories with target_account_id should mark transactions as transfers
+    trans_categories = db.query(models.Category).filter(models.Category.target_account_id != None).all()
+    trans_cat_ids = [c.id for c in trans_categories]
+    
+    count = 0
+    # ... (existing transfer fix logic) ...
+    if trans_cat_ids:
+        affected = db.query(models.Transaction).filter(
+            models.Transaction.category_id.in_(trans_cat_ids),
+            models.Transaction.is_transfer == 0
+        ).all()
+        for t in affected:
+            cat = db.query(models.Category).filter(models.Category.id == t.category_id).first()
+            t.is_transfer = 1
+            t.to_account_id = cat.target_account_id
+            count += 1
+            
+    # 2. Mark income-related categories
+    income_keywords = ['lohn', 'salary', 'income', 'einkommen', 'interest', 'zinsen', 'dividends']
+    for keyword in income_keywords:
+        income_cats = db.query(models.Category).filter(models.Category.name.ilike(f'%{keyword}%')).all()
+        for cat in income_cats:
+            cat.is_income = 1
+    
+    # 3. Also ensure 'Transfer' parent itself and its children are handled
+    # ... (rest of the transfer fix logic) ...
+    transfer_parent = db.query(models.Category).filter(models.Category.name == "Transfer", models.Category.parent_id == None).first()
+    if transfer_parent:
+        def get_all_child_ids(parent_id):
+            children = db.query(models.Category).filter(models.Category.parent_id == parent_id).all()
+            ids = [c.id for c in children]
+            for child in children:
+                ids.extend(get_all_child_ids(child.id))
+            return ids
+            
+        all_transfer_ids = [transfer_parent.id] + get_all_child_ids(transfer_parent.id)
+        
+        # Any transaction assigned to a category in the Transfer hierarchy MUST be marked is_transfer=1
+        affected_hierarchy = db.query(models.Transaction).filter(
+            models.Transaction.category_id.in_(all_transfer_ids),
+            models.Transaction.is_transfer == 0
+        ).all()
+        
+        for t in affected_hierarchy:
+            # If it's the parent 'Transfer' without a target_account_id, it might be ambiguous
+            # but usually it's still a transfer.
+            t.is_transfer = 1
+            count += 1
+            
+    db.commit()
+    return {"message": f"Fixed {count} transactions"}
 
 # --- Static File Serving (for Docker) ---
 
