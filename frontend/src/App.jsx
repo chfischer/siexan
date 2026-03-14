@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
-import { LayoutDashboard, Receipt, Settings, Upload, Wallet, Database, List } from 'lucide-react'
+import { LayoutDashboard, Receipt, Settings, Upload, Wallet, Database, List, Wand2 } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import Transactions from './pages/Transactions'
 import MapperManagement from './pages/MapperManagement'
 import AccountManagement from './pages/AccountManagement'
 import CategoryManagement from './pages/CategoryManagement'
 import DatabaseSettings from './pages/DatabaseSettings'
+import RuleWizard from './pages/RuleWizard'
 import ImportModal from './components/ImportModal'
 
 function App() {
@@ -131,6 +132,22 @@ function App() {
                             <List size={18} /> Categories
                         </NavLink>
                         <NavLink
+                            to="/rules/wizard"
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                            style={({ isActive }) => ({
+                                background: 'none',
+                                border: 'none',
+                                color: isActive ? 'var(--primary)' : 'var(--text-muted)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                fontWeight: 600,
+                                textDecoration: 'none'
+                            })}
+                        >
+                            <Wand2 size={18} /> Wizard
+                        </NavLink>
+                        <NavLink
                             to="/mapper"
                             className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
                             style={({ isActive }) => ({
@@ -202,6 +219,7 @@ function App() {
                         <Route path="/accounts" element={<AccountManagement refreshTrigger={refreshTrigger} />} />
                         <Route path="/categories" element={<CategoryManagement refreshTrigger={refreshTrigger} />} />
                         <Route path="/rules" element={<Navigate to="/categories" replace />} />
+                        <Route path="/rules/wizard" element={<RuleWizard refreshTrigger={refreshTrigger} />} />
                         <Route path="/mapper" element={<MapperManagement />} />
                         <Route path="/db" element={<DatabaseSettings />} />
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />

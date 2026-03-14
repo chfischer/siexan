@@ -311,6 +311,113 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
 
 # --- Categorization Rules ---
 
+@app.get("/rules/suggest")
+def suggest_rules(db: Session = Depends(get_db)):
+    import re as re_module
+
+    # Fetch all non-transfer outgoing transactions with account info
+    txns = db.query(
+        models.Transaction.description,
+        models.Transaction.amount,
+        models.Account.id.label("account_id"),
+        models.Account.name.label("account_name"),
+    ).join(models.Account, models.Transaction.account_id == models.Account.id).filter(
+        models.Transaction.is_transfer == 0,
+        models.Transaction.amount < 0,
+        models.Transaction.description != None,
+    ).all()
+
+    # Extract merchant key from description
+    def extract_merchant(description):
+        # Skip personal TWINT transfers (reason contains phone number)
+        if "UBS TWINT" in description and re_module.search(r'\+41\d{8,}', description):
+            # Check if counterparty looks like a person name (no address in reason)
+            if "; Debit UBS TWINT" in description:
+                return None
+
+        # Revolut-style: "Card Payment, Merchant"
+        if description.startswith("Card Payment, "):
+            return description[len("Card Payment, "):]
+
+        # UBS-style: "Counterparty;..." — take first segment
+        if ";" in description:
+            return description.split(";")[0].strip()
+
+        return description.strip()
+
+    # Group by (merchant_key, account_id)
+    from collections import defaultdict
+    groups = defaultdict(lambda: {"count": 0, "total": 0.0, "account_name": ""})
+    for txn in txns:
+        key = extract_merchant(txn.description)
+        if not key or len(key) < 2:
+            continue
+        gk = (key, txn.account_id)
+        groups[gk]["count"] += 1
+        groups[gk]["total"] += abs(txn.amount)
+        groups[gk]["account_name"] = txn.account_name
+        groups[gk]["account_id"] = txn.account_id
+
+    # Fetch existing rules and compile their patterns
+    existing_rules = db.query(models.CategorizationRule).all()
+    existing_patterns = []
+    for r in existing_rules:
+        if r.target_category_id:
+            try:
+                existing_patterns.append(re_module.compile(r.pattern, re_module.IGNORECASE))
+            except Exception:
+                pass
+
+    def already_covered(merchant_key):
+        for pat in existing_patterns:
+            if pat.search(merchant_key):
+                return True
+        return False
+
+    results = []
+    for (merchant_key, account_id), data in groups.items():
+        results.append({
+            "merchant_key": merchant_key,
+            "suggested_pattern": merchant_key,
+            "count": data["count"],
+            "total_amount": round(data["total"], 2),
+            "account_id": account_id,
+            "account_name": data["account_name"],
+            "has_rule": already_covered(merchant_key),
+        })
+
+    results.sort(key=lambda x: x["count"], reverse=True)
+    return results
+
+
+@app.get("/rules/suggest/transactions")
+def suggest_rule_transactions(merchant_key: str, account_id: int, db: Session = Depends(get_db)):
+    import re as re_module
+
+    def extract_merchant(description):
+        if "UBS TWINT" in description and re_module.search(r'\+41\d{8,}', description):
+            if "; Debit UBS TWINT" in description:
+                return None
+        if description.startswith("Card Payment, "):
+            return description[len("Card Payment, "):]
+        if ";" in description:
+            return description.split(";")[0].strip()
+        return description.strip()
+
+    txns = db.query(models.Transaction).filter(
+        models.Transaction.account_id == account_id,
+        models.Transaction.is_transfer == 0,
+        models.Transaction.amount < 0,
+        models.Transaction.description != None,
+    ).order_by(models.Transaction.date.desc()).all()
+
+    return [
+        {"id": t.id, "date": t.date, "description": t.description, "amount": t.amount}
+        for t in txns
+        if extract_merchant(t.description or "") == merchant_key
+    ]
+
+
 @app.post("/rules/")
 def create_rule(rule: schemas.CategorizationRuleCreate, db: Session = Depends(get_db)):
     db_rule = models.CategorizationRule(**rule.dict())
