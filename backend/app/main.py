@@ -975,6 +975,29 @@ def get_summary(
         "total_spending": abs(total_spending)
     }
 
+@app.get("/analytics/spending-by-account")
+def get_spending_by_account(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    from sqlalchemy import func
+    query = db.query(
+        models.Account.name,
+        models.Account.id,
+        func.sum(models.Transaction.amount).label("total")
+    ).join(models.Transaction, models.Transaction.account_id == models.Account.id).filter(
+        models.Transaction.is_transfer == 0,
+        models.Transaction.amount < 0
+    )
+    if start_date:
+        query = query.filter(models.Transaction.date >= start_date)
+    if end_date:
+        query = query.filter(models.Transaction.date <= end_date)
+    rows = query.group_by(models.Account.id, models.Account.name).all()
+    return [{"account": r[0], "account_id": r[1], "total": abs(r[2])} for r in rows if r[2]]
+
+
 @app.post("/migrations/fix-transfers")
 def fix_transfers(db: Session = Depends(get_db)):
     # 0. Migration: Create is_income and priority column if missing

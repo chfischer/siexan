@@ -39,6 +39,8 @@ function Dashboard({ refreshTrigger }) {
     const [monthlyData, setMonthlyData] = useState([])
     const [allCategories, setAllCategories] = useState([])
     const [loadingMonthly, setLoadingMonthly] = useState(true)
+    const [accountSpending, setAccountSpending] = useState([])
+    const accountChartRef = React.useRef(null)
     const [localRefreshTrigger, setLocalRefreshTrigger] = useState(0)
     const [explodedBars, setExplodedBars] = useState({}) // { '2024-01_inflow': [categories], ... }
     const chartRef = React.useRef(null)
@@ -98,6 +100,19 @@ function Dashboard({ refreshTrigger }) {
         }
     }
 
+    const fetchAccountSpending = async () => {
+        const { start, end } = getDatesForPeriod(period)
+        if (period === 'custom' && (!start || !end)) return
+        try {
+            const res = await axios.get('/api/analytics/spending-by-account', {
+                params: { start_date: start, end_date: end }
+            })
+            setAccountSpending(res.data)
+        } catch (err) {
+            console.error("Error fetching account spending", err)
+        }
+    }
+
     const handleDelete = async (id) => {
         if (!window.confirm("Delete this transaction?")) return
         try {
@@ -132,6 +147,7 @@ function Dashboard({ refreshTrigger }) {
     useEffect(() => {
         fetchSummary()
         fetchMonthly()
+        fetchAccountSpending()
     }, [period, customStart, customEnd, refreshTrigger, localRefreshTrigger])
 
     useEffect(() => {
@@ -569,7 +585,7 @@ function Dashboard({ refreshTrigger }) {
                     <p style={{ marginTop: '1rem' }}>Adjust your filter or upload more transactions.</p>
                 </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: accountSpending.length > 0 ? '1fr 1fr' : '1fr', gap: '2rem' }}>
                     <div className="glass-card">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -643,6 +659,58 @@ function Dashboard({ refreshTrigger }) {
                             />
                         </div>
                     </div>
+
+                    {accountSpending.length > 0 && (() => {
+                        const accountPalette = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#3b82f6', '#14b8a6']
+                        const accountPieData = {
+                            labels: accountSpending.map(a => a.account),
+                            datasets: [{
+                                data: accountSpending.map(a => a.total),
+                                backgroundColor: accountSpending.map((_, i) => accountPalette[i % accountPalette.length]),
+                                borderWidth: 0,
+                            }]
+                        }
+                        return (
+                            <div className="glass-card">
+                                <div style={{ marginBottom: '2rem' }}>
+                                    <h2 style={{ margin: 0 }}>Spending by Account</h2>
+                                </div>
+                                <div style={{ height: '300px', display: 'flex', justifyContent: 'center' }}>
+                                    <Pie
+                                        ref={accountChartRef}
+                                        data={accountPieData}
+                                        plugins={[ChartDataLabels]}
+                                        options={{
+                                            maintainAspectRatio: false,
+                                            plugins: {
+                                                legend: { position: 'right', labels: { color: 'white', padding: 20 } },
+                                                datalabels: {
+                                                    color: '#fff',
+                                                    formatter: (value, ctx) => {
+                                                        const total = ctx.chart.data.datasets[0].data.reduce((acc, curr) => acc + curr, 0)
+                                                        return (value / total) > 0.04 ? `${ctx.chart.data.labels[ctx.dataIndex]}\n$${Math.round(value)}` : ''
+                                                    },
+                                                    font: { weight: 'bold', size: 10 },
+                                                    textAlign: 'center',
+                                                    display: 'auto'
+                                                },
+                                                tooltip: {
+                                                    callbacks: {
+                                                        label: (context) => {
+                                                            const value = context.raw
+                                                            const total = context.chart.data.datasets[context.datasetIndex].data.reduce((acc, curr) => acc + curr, 0)
+                                                            const pct = ((value / total) * 100).toFixed(1)
+                                                            return ` ${context.label}: $${value.toFixed(2)} (${pct}%)`
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        )
+                    })()}
                 </div>
             )}
 
